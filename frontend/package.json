@@ -1,0 +1,27 @@
+{
+  "name": "llm-chat",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:concurrent": "VITE_API_BASE=http://127.0.0.1:8787 vite",
+    "server": "tsx watch server/index.ts",
+    "dev:all": "concurrently -k \"npm run server\" \"npm run dev:concurrent\"",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@types/dompurify": "^3.0.5",
+    "@types/node": "^22.14.0",
+    "concurrently": "^9.1.2",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.4"
+  },
+  "dependencies": {
+    "dompurify": "^3.4.0",
+    "marked": "^18.0.1"
+  }
+}

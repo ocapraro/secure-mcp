@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Chat</title>
+  </head>
+  <body>
+    <div id="app" class="app">
+      <aside class="sidebar" id="sidebar" aria-label="Sidebar">
+        <button type="button" class="new-chat" id="newChat">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path d="M12 20h9M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z" />
+          </svg>
+          New chat
+        </button>
+
+        <div class="sidebar-section">
+          <div class="sidebar-section-title">Recents</div>
+          <ul id="recentsList" class="recents" aria-label="Recent chats"></ul>
+        </div>
+
+        <div class="sidebar-spacer"></div>
+      </aside>
+
+      <div class="main-wrap">
+        <header class="topbar">
+          <div class="topbar-model">
+            <label class="sr-only" for="modelSelect">Model</label>
+            <select id="modelSelect" class="model-select" aria-label="Model"></select>
+          </div>
+          <div class="topbar-actions">
+            <button type="button" class="icon-btn" id="sidebarToggle" aria-label="Toggle sidebar">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <rect x="3" y="4" width="18" height="6" rx="1" />
+                <rect x="3" y="14" width="12" height="6" rx="1" />
+              </svg>
+            </button>
+          </div>
+        </header>
+
+        <main class="main">
+          <div class="main-scroll">
+            <div id="emptyState" class="empty-state">Ready when you are.</div>
+            <section id="messages" class="messages" aria-live="polite" hidden></section>
+          </div>
+
+          <div class="composer-dock">
+            <p id="status" class="status" role="status"></p>
+            <form id="composer" class="composer" autocomplete="off">
+              <label class="sr-only" for="prompt">Message</label>
+              <textarea
+                id="prompt"
+                rows="1"
+                placeholder="Ask anything"
+              ></textarea>
+              <div class="composer-trailing">
+                <button type="submit" class="send-fab" id="send" aria-label="Send" disabled>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path
+                      d="M6 15l6-6 6 6"
+                      stroke="currentColor"
+                      stroke-width="2.2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
+                </button>
+              </div>
+            </form>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <div
+      id="chatContextMenu"
+      class="chat-context-menu"
+      hidden
+      role="menu"
+      aria-hidden="true"
+    >
+      <button type="button" class="chat-context-menu-item" role="menuitem" id="chatContextDelete">
+        Delete chat
+      </button>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
