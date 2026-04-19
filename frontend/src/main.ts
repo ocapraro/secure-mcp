@@ -106,6 +106,89 @@ function renderAssistantHtml(markdown: string): string {
   return DOMPurify.sanitize(html);
 }
 
+const FINAL_RESPONSE_MARKER = "## Final Response";
+const THINKING_SECTION_MARKERS = [
+  "## Working",
+  "## Planning",
+  "### Planner output",
+  "### Delegation",
+  "## Synthesis",
+];
+
+function splitAssistantContent(content: string): { thinking: string; final: string } {
+  const idx = content.indexOf(FINAL_RESPONSE_MARKER);
+  if (idx < 0) {
+    // During streaming, orchestration updates arrive before the final-response marker.
+    // Keep that content in the thinking panel instead of rendering as a normal assistant block.
+    const looksLikeThinking = THINKING_SECTION_MARKERS.some((marker) =>
+      content.includes(marker),
+    );
+    if (looksLikeThinking) {
+      return { thinking: content.trim(), final: "" };
+    }
+    return { thinking: content.trim(), final: "" };
+  }
+
+  const afterMarker = content.slice(idx + FINAL_RESPONSE_MARKER.length);
+  const final = afterMarker.replace(/^\s+/, "").trim();
+  const thinking = content.slice(0, idx).trim();
+  return { thinking, final };
+}
+
+function renderAssistantStructured(
+  bodyEl: HTMLElement,
+  content: string,
+  opts?: { collapseThinking?: boolean },
+): void {
+  const collapseThinking = opts?.collapseThinking ?? true;
+  const { thinking, final } = splitAssistantContent(content);
+  bodyEl.className = "msg-body";
+  bodyEl.replaceChildren();
+
+  // Backward compatibility: if no marker exists, render as a normal assistant response.
+  if (!thinking && !final) {
+    return;
+  }
+  const hasFinalMarker = content.indexOf(FINAL_RESPONSE_MARKER) >= 0;
+  const looksLikeThinking = THINKING_SECTION_MARKERS.some((marker) =>
+    content.includes(marker),
+  );
+  if (!final && !hasFinalMarker && !looksLikeThinking) {
+    bodyEl.classList.add("md");
+    bodyEl.innerHTML = renderAssistantHtml(content);
+    return;
+  }
+
+  if (thinking) {
+    const details = document.createElement("details");
+    details.className = "thinking-panel";
+    details.open = final.length === 0 || !collapseThinking;
+
+    const summary = document.createElement("summary");
+    summary.textContent = "Thinking process";
+    details.append(summary);
+
+    const thinkingBody = document.createElement("div");
+    thinkingBody.className = "thinking-body md";
+    thinkingBody.innerHTML = renderAssistantHtml(thinking);
+    details.append(thinkingBody);
+
+    // Keep the inner thinking panel pinned to the newest content while streaming.
+    requestAnimationFrame(() => {
+      thinkingBody.scrollTop = thinkingBody.scrollHeight;
+    });
+
+    bodyEl.append(details);
+  }
+
+  if (final) {
+    const finalWrap = document.createElement("div");
+    finalWrap.className = "final-response md";
+    finalWrap.innerHTML = renderAssistantHtml(final);
+    bodyEl.append(finalWrap);
+  }
+}
+
 let sessionSummaries: SessionSummary[] = [];
 let activeChatId: string | null = null;
 /** Alias for `sessionMessages.get(activeChatId)` after `bindActiveHistory()`. */
@@ -429,8 +512,7 @@ function renderMessage(msg: ChatMessage, index: number) {
 
   const body = document.createElement("div");
   if (msg.role === "assistant") {
-    body.className = "msg-body md";
-    body.innerHTML = renderAssistantHtml(msg.content);
+    renderAssistantStructured(body, msg.content);
   } else {
     body.className = "msg-body";
     body.textContent = msg.content;
@@ -752,12 +834,24 @@ formEl.addEventListener("submit", (e) => {
         if (chatId === activeChatId) {
           const bodyEl = activeStreamingAssistantBodyEl();
           if (bodyEl) {
-            bodyEl.classList.add("md");
-            bodyEl.innerHTML = renderAssistantHtml(assistant.content);
+            // Keep the thinking panel expanded while the stream is still in progress.
+            renderAssistantStructured(bodyEl, assistant.content, {
+              collapseThinking: false,
+            });
           }
           scheduleScrollMainToBottomIfStuck();
         }
       });
+
+      if (chatId === activeChatId) {
+        const bodyEl = activeStreamingAssistantBodyEl();
+        if (bodyEl) {
+          // Collapse thinking only after the response is fully streamed.
+          renderAssistantStructured(bodyEl, assistant.content, {
+            collapseThinking: true,
+          });
+        }
+      }
 
       if (chatId === activeChatId) setStatus("");
       try {

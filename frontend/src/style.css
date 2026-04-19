@@ -437,6 +437,71 @@ button:disabled {
   border-radius: 8px;
 }
 
+.thinking-panel {
+  margin: 0.25rem 0 0.85rem;
+  border: 1px solid #383838;
+  border-radius: 12px;
+  background: #1d1d1d;
+  color: #9a9a9a;
+  overflow: hidden;
+}
+
+.thinking-panel > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 0.55rem 0.8rem;
+  font-size: 0.76rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border-bottom: 1px solid #303030;
+  color: #a5a5a5;
+}
+
+.thinking-panel > summary::-webkit-details-marker {
+  display: none;
+}
+
+.thinking-body {
+  max-height: 34vh;
+  overflow-y: auto;
+  padding: 0.6rem 0.8rem;
+  font-size: 0.82rem;
+  line-height: 1.42;
+  scrollbar-width: thin;
+  scrollbar-color: #4a4a4a transparent;
+}
+
+.thinking-body::-webkit-scrollbar {
+  width: 7px;
+}
+
+.thinking-body::-webkit-scrollbar-thumb {
+  background: #4a4a4a;
+  border-radius: 999px;
+}
+
+.thinking-body.md {
+  color: #9a9a9a;
+}
+
+.thinking-body.md p {
+  margin: 0.5rem 0;
+}
+
+.thinking-body.md h1,
+.thinking-body.md h2,
+.thinking-body.md h3,
+.thinking-body.md h4 {
+  margin: 0.85rem 0 0.4rem;
+  color: #b3b3b3;
+  font-size: 0.9rem;
+}
+
+.final-response {
+  color: #ececec;
+}
+
 .composer-dock {
   padding: 0.35rem 1rem 1.25rem;
   max-width: 52rem;
