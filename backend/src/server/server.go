@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"smcp/database"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -73,5 +74,24 @@ func InitServer(mux *http.ServeMux, dbService *database.DatabaseService) {
 			ID:            id,
 			UpdatedAt:     time.Now(),
 		})
+	})
+
+	mux.HandleFunc("GET /api/sessions/{id}", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		idParam := r.PathValue("id")
+		id, err := strconv.ParseInt(idParam, 10, 64)
+		if err != nil {
+			http.Error(w, "invalid session id", http.StatusBadRequest)
+			return
+		}
+
+		session, err := dbService.GetSessionByID(id)
+		if err != nil {
+			http.Error(w, "session not found", http.StatusNotFound)
+			return
+		}
+
+		_ = json.NewEncoder(w).Encode(session)
 	})
 }

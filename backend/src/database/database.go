@@ -108,3 +108,45 @@ func (s *DatabaseService) CreateSession(session CreateSession) (int64, error) {
 
 	return id, nil
 }
+
+func (s *DatabaseService) GetSessionByID(id int64) (Session, error) {
+	var session Session
+
+	err := s.db.QueryRow(`
+		SELECT id, title, updated_at, model
+		FROM sessions
+		WHERE id = ?
+	`, id).Scan(
+		&session.ID,
+		&session.Title,
+		&session.UpdatedAt,
+		&session.Model,
+	)
+	if err != nil {
+		return Session{}, err
+	}
+
+	rows, err := s.db.Query(`
+		SELECT id, role, content, session_id
+		FROM messages
+		WHERE session_id = ?
+		ORDER BY id ASC
+	`, id)
+	if err != nil {
+		return Session{}, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var message Message
+		if err := rows.Scan(&message.ID, &message.Role, &message.Content, &message.SessionID); err != nil {
+			return Session{}, err
+		}
+		session.Messages = append(session.Messages, message)
+	}
+	if err := rows.Err(); err != nil {
+		return Session{}, err
+	}
+
+	return session, nil
+}
