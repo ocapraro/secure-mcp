@@ -91,3 +91,20 @@ func (s *DatabaseService) GetSessions() ([]PartialSession, error) {
 
 	return sessions, nil
 }
+
+func (s *DatabaseService) CreateSession(session CreateSession) (int64, error) {
+	result, err := s.db.Exec(`
+		INSERT INTO sessions (title, model)
+		VALUES (?, ?)
+	`, session.Title, session.Model)
+	if err != nil {
+		return 0, err
+	}
+
+	id, err := result.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+
+	return id, nil
+}

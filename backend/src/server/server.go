@@ -4,11 +4,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"smcp/database"
 	"strings"
 	"time"
 )
 
-func InitServer(mux *http.ServeMux) {
+func InitServer(mux *http.ServeMux, dbService *database.DatabaseService) {
 	client := &http.Client{Timeout: 5 * time.Second}
 	url, ok := os.LookupEnv("OLLAMA_BASE_URL")
 	if !ok || strings.TrimSpace(url) == "" {
@@ -43,5 +44,34 @@ func InitServer(mux *http.ServeMux) {
 		}
 
 		_ = json.NewEncoder(w).Encode(models)
+	})
+
+	mux.HandleFunc("GET /api/sessions", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		sessions, err := dbService.GetSessions()
+		if err != nil {
+			http.Error(w, "failed to fetch sessions", http.StatusBadGateway)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(sessions)
+	})
+
+	mux.HandleFunc("POST /api/sessions", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		var session database.CreateSession
+		if err := json.NewDecoder(r.Body).Decode(&session); err != nil {
+			http.Error(w, "invalid json", http.StatusBadRequest)
+			return
+		}
+		id, err := dbService.CreateSession(session)
+		if err != nil {
+			http.Error(w, "failed to fetch sessions", http.StatusBadGateway)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(database.PartialSession{
+			CreateSession: session,
+			ID:            id,
+			UpdatedAt:     time.Now(),
+		})
 	})
 }

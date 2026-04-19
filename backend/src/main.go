@@ -8,14 +8,6 @@ import (
 )
 
 func main() {
-	mux := http.NewServeMux()
-
-	server.InitServer(mux)
-
-	server := &http.Server{
-		Addr:    ":8080",
-		Handler: mux,
-	}
 	dbService, err := database.NewDatabaseService("../data/app.db")
 	if err != nil {
 		panic("Failed to connect to the database")
@@ -25,6 +17,15 @@ func main() {
 	err = dbService.Init()
 	if err != nil {
 		log.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+
+	server.InitServer(mux, dbService)
+
+	server := &http.Server{
+		Addr:    ":8080",
+		Handler: mux,
 	}
 
 	log.Println("listening on :8080")

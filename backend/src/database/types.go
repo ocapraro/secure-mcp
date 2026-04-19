@@ -2,11 +2,15 @@ package database
 
 import "time"
 
+type CreateSession struct {
+	Title string `json:"title"`
+	Model string `json:"model"`
+}
+
 type PartialSession struct {
+	CreateSession
 	ID        int64     `json:"id"`
-	Title     string    `json:"title"`
 	UpdatedAt time.Time `json:"updated_at"`
-	Model     string    `json:"model"`
 }
 
 type Role string
