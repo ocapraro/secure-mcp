@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 )
 
@@ -17,14 +19,17 @@ func NewOllamaService(baseURL string, client *http.Client) *OllamaService {
 	}
 }
 
-func (s *OllamaService) GetHealth(ctx context.Context) HealthResponse {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.baseURL, nil)
+// get performs a get request to the desired endpoint
+func (s *OllamaService) get(endpoint string, ctx context.Context) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.baseURL+endpoint, nil)
 	if err != nil {
-		return HealthResponse{
-			Status: "not ok",
-		}
+		return nil, err
 	}
-	resp, err := s.client.Do(req)
+	return s.client.Do(req)
+}
+
+func (s *OllamaService) GetHealth(ctx context.Context) HealthResponse {
+	resp, err := s.get("", ctx)
 	if err != nil || resp.StatusCode != 200 {
 		return HealthResponse{
 			Status: "not ok",
@@ -32,12 +37,25 @@ func (s *OllamaService) GetHealth(ctx context.Context) HealthResponse {
 	}
 	defer resp.Body.Close()
 
-	// var result HealthResponse
-	// if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-	// 	panic(err)
-	// }
-
 	return HealthResponse{
 		Status: "ok",
 	}
+}
+
+func (s *OllamaService) GetModels(ctx context.Context) (OllamaModelsResponse, error) {
+	resp, err := s.get("/api/tags", ctx)
+	if err != nil {
+		return OllamaModelsResponse{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return OllamaModelsResponse{}, fmt.Errorf("ollama returned status %d", resp.StatusCode)
+	}
+
+	var result OllamaModelsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return OllamaModelsResponse{}, err
+	}
+
+	return result, nil
 }

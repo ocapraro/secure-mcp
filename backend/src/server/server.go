@@ -29,4 +29,19 @@ func InitServer(mux *http.ServeMux) {
 		health := ollamaService.GetHealth(r.Context())
 		_ = json.NewEncoder(w).Encode(health)
 	})
+
+	mux.HandleFunc("GET /api/models", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		ollamaModels, err := ollamaService.GetModels(r.Context())
+		if err != nil {
+			http.Error(w, "failed to fetch models from Ollama", http.StatusBadGateway)
+			return
+		}
+		var models ModelsResponse
+		for _, model := range ollamaModels.Models {
+			models.Models = append(models.Models, model.Name)
+		}
+
+		_ = json.NewEncoder(w).Encode(models)
+	})
 }
