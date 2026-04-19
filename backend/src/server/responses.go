@@ -38,3 +38,8 @@ type OllamaModelDetails struct {
 	ParameterSize     string   `json:"parameter_size"`
 	QuantizationLevel string   `json:"quantization_level"`
 }
+
+type OllamaMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}

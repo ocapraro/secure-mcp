@@ -66,8 +66,17 @@ func (s *OllamaService) SendChat(ctx context.Context, req ChatRequest) (*http.Re
 		return nil, fmt.Errorf("model is required")
 	}
 
-	req.Stream = true
-	body, err := json.Marshal(req)
+	// Map to Ollama-compatible messages (role + content only)
+	ollamaMsgs := make([]OllamaMessage, len(req.Messages))
+	for i, m := range req.Messages {
+		ollamaMsgs[i] = OllamaMessage{Role: string(m.Role), Content: m.Content}
+	}
+	payload := map[string]any{
+		"model":    req.Model,
+		"messages": ollamaMsgs,
+		"stream":   true,
+	}
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
 	}
