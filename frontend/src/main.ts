@@ -42,6 +42,7 @@ const newChatEl = requireEl<HTMLButtonElement>("#newChat");
 const modelSelectEl = requireEl<HTMLSelectElement>("#modelSelect");
 const recentsListEl = requireEl<HTMLUListElement>("#recentsList");
 const chatContextMenuEl = requireEl<HTMLDivElement>("#chatContextMenu");
+const chatContextRenameEl = requireEl<HTMLButtonElement>("#chatContextRename");
 const chatContextDeleteEl = requireEl<HTMLButtonElement>("#chatContextDelete");
 const sidebarToggleEl = document.querySelector<HTMLButtonElement>("#sidebarToggle");
 
@@ -247,7 +248,6 @@ async function openChat(id: string) {
     return;
   }
   try {
-    await persistActiveSession();
     if (!inFlight.has(id)) {
       const full = await fetchSession(id);
       ingestSessionFromServer(full);
@@ -385,7 +385,12 @@ async function pumpOllamaNdjsonStream(
     for (const line of lines) {
       const trimmed = line.trim();
       if (!trimmed) continue;
-      const chunk = JSON.parse(trimmed) as OllamaChatStreamLine;
+      let chunk: OllamaChatStreamLine;
+      try {
+        chunk = JSON.parse(trimmed) as OllamaChatStreamLine;
+      } catch {
+        continue;
+      }
       const piece = chunk.message?.content ?? "";
       if (piece) onDelta(piece);
     }
@@ -393,10 +398,39 @@ async function pumpOllamaNdjsonStream(
 
   const tail = buffer.trim();
   if (!tail) return;
-  const chunk = JSON.parse(tail) as OllamaChatStreamLine;
+  let chunk: OllamaChatStreamLine;
+  try {
+    chunk = JSON.parse(tail) as OllamaChatStreamLine;
+  } catch {
+    return;
+  }
   const piece = chunk.message?.content ?? "";
   if (piece) onDelta(piece);
 }
+
+chatContextRenameEl.addEventListener("click", () => {
+  void (async () => {
+    const id = contextMenuSessionId;
+    hideChatContextMenu();
+    if (!id) return;
+    const current = sessionSummaries.find((s) => s.id === id)?.title ?? "";
+    const newTitle = prompt("Rename chat:", current);
+    if (!newTitle || newTitle.trim() === "" || newTitle.trim() === current) return;
+    try {
+      const modelId = sessionModelIds.get(id) ?? "";
+      const messages = sessionMessages.get(id) ?? [];
+      await updateSession(id, {
+        title: newTitle.trim(),
+        modelId,
+        messages: messages.map((m) => ({ ...m })),
+      });
+      await refreshSessionList();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Rename failed";
+      setStatus(message, "error");
+    }
+  })();
+});
 
 chatContextDeleteEl.addEventListener("click", () => {
   void (async () => {
@@ -593,7 +627,18 @@ formEl.addEventListener("submit", (e) => {
 
       if (chatId === activeChatId) setStatus("");
       try {
-        await persistMessagesToServer(chatId, msgs);
+        const modelId = sessionModelIds.get(chatId) ?? modelSelectEl.value;
+        // Auto-name the chat after the first exchange (1 user + 1 assistant)
+        const isFirstExchange = msgs.filter((m) => m.role === "user").length === 1;
+        const firstUserMsg = msgs.find((m) => m.role === "user")?.content ?? "";
+        const autoTitle = isFirstExchange
+          ? firstUserMsg.slice(0, 60).trimEnd() + (firstUserMsg.length > 60 ? "…" : "")
+          : undefined;
+        await updateSession(chatId, {
+          messages: msgs.map((m) => ({ ...m })),
+          modelId,
+          title: autoTitle,
+        });
       } catch {
         /* e.g. session deleted while streaming */
       }

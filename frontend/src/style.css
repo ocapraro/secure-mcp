@@ -545,6 +545,14 @@ button:disabled {
   cursor: pointer;
 }
 
+.chat-context-menu-item--neutral {
+  color: #e5e5e5;
+}
+
+.chat-context-menu-item--neutral:hover {
+  background: #3a3a3a;
+}
+
 .chat-context-menu-item:hover {
   background: #3d2a2a;
 }
