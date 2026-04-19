@@ -1,11 +1,19 @@
 package server
 
+import "smcp/database"
+
 type HealthResponse struct {
 	Status string `json:"status"`
 }
 
 type ModelsResponse struct {
 	Models []string `json:"models"`
+}
+
+type ChatRequest struct {
+	Model    string             `json:"model"`
+	Messages []database.Message `json:"messages"`
+	Stream   bool               `json:"stream,omitempty"`
 }
 
 // ========= Ollama Responses ===========

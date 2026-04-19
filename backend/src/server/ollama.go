@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -58,4 +59,24 @@ func (s *OllamaService) GetModels(ctx context.Context) (OllamaModelsResponse, er
 	}
 
 	return result, nil
+}
+
+func (s *OllamaService) SendChat(ctx context.Context, req ChatRequest) (*http.Response, error) {
+	if req.Model == "" {
+		return nil, fmt.Errorf("model is required")
+	}
+
+	req.Stream = true
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, s.baseURL+"/api/chat", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	return s.client.Do(httpReq)
 }

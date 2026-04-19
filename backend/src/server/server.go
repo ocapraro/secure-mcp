@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"os"
 	"smcp/database"
@@ -135,5 +136,57 @@ func InitServer(mux *http.ServeMux, dbService *database.DatabaseService) {
 		}
 
 		w.WriteHeader(http.StatusNoContent)
+	})
+
+	mux.HandleFunc("POST /api/chat", func(w http.ResponseWriter, r *http.Request) {
+		var chatReq ChatRequest
+		if err := json.NewDecoder(r.Body).Decode(&chatReq); err != nil {
+			http.Error(w, "invalid json", http.StatusBadRequest)
+			return
+		}
+		if strings.TrimSpace(chatReq.Model) == "" {
+			http.Error(w, "model is required", http.StatusBadRequest)
+			return
+		}
+		if len(chatReq.Messages) == 0 {
+			http.Error(w, "messages are required", http.StatusBadRequest)
+			return
+		}
+
+		resp, err := ollamaService.SendChat(r.Context(), chatReq)
+		if err != nil {
+			http.Error(w, "failed to send chat to Ollama", http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			http.Error(w, "chat request failed", http.StatusBadGateway)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.WriteHeader(http.StatusOK)
+
+		flusher, _ := w.(http.Flusher)
+		buf := make([]byte, 2048)
+		for {
+			n, readErr := resp.Body.Read(buf)
+			if n > 0 {
+				if _, writeErr := w.Write(buf[:n]); writeErr != nil {
+					return
+				}
+				if flusher != nil {
+					flusher.Flush()
+				}
+			}
+			if readErr != nil {
+				if readErr == io.EOF {
+					return
+				}
+				http.Error(w, "stream read failed", http.StatusBadGateway)
+				return
+			}
+		}
 	})
 }
