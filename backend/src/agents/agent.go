@@ -3,27 +3,27 @@ package agents
 import (
 	"context"
 	"fmt"
-	"smcp/ollama"
+	"smcp/openai"
 )
 
 type Agent struct {
-	Messages []ollama.OllamaMessage
+	Messages []openai.OllamaMessage
 	Model    string
 }
 
-func (a *Agent) Chat(message string, ollamaService *ollama.OllamaService, ctx context.Context) (string, error) {
+func (a *Agent) Chat(message string, openaiService *openai.OpenAIService, ctx context.Context) (string, error) {
 	messages := append(a.Messages,
-		ollama.OllamaMessage{
+		openai.OllamaMessage{
 			Role:    "user",
 			Content: fmt.Sprintf("{request:\"%s\"}", message),
 		},
 	)
 
-	payload := ollama.OllamaChatRequest{
+	payload := openai.OllamaChatRequest{
 		Model:    a.Model,
 		Messages: messages,
 		Stream:   false,
 	}
 
-	return ollamaService.SendChatPatiently(ctx, payload)
+	return openaiService.SendChatPatiently(ctx, payload)
 }

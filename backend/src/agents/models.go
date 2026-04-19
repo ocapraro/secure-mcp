@@ -1,5 +1,5 @@
 package agents
 
-const LIGHT_MODEL = "llama3.2:1b"
-const MEDIUM_MODEL = "llama3.2:3b"
-const HEAVY_MODEL = "gemma4:e4b"
+const LIGHT_MODEL = "gpt-4o-mini"
+const MEDIUM_MODEL = "gpt-4o-mini"
+const HEAVY_MODEL = "gpt-4o"

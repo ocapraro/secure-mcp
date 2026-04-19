@@ -2,12 +2,12 @@ package agents
 
 import (
 	"fmt"
-	"smcp/ollama"
+	"smcp/openai"
 )
 
 func CallPlanner() *Agent {
 	return &Agent{
-		Messages: []ollama.OllamaMessage{
+		Messages: []openai.OllamaMessage{
 			{
 				Role:    "system",
 				Content: fmt.Sprintf("You are a planner. You will be given requests in the format: %s. You must evaluate the request, and then break it into concrete actionable tasks. Your response MUST follow the format: `{\"reasoning\":string,\"tasks\":string[]}`", requestFormat),

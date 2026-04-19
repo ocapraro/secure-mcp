@@ -8,7 +8,7 @@ import (
 	"os"
 	"smcp/agents"
 	"smcp/database"
-	"smcp/ollama"
+	"smcp/openai"
 	"smcp/types"
 	"strconv"
 	"strings"
@@ -19,12 +19,12 @@ func InitServer(mux *http.ServeMux, dbService *database.DatabaseService) {
 	// No global timeout — streaming chat responses can take arbitrarily long.
 	// Request-level context (r.Context()) handles cancellation when the client disconnects.
 	client := &http.Client{}
-	url, ok := os.LookupEnv("OLLAMA_BASE_URL")
-	if !ok || strings.TrimSpace(url) == "" {
-		panic("OLLAMA_BASE_URL environment variable is not set")
+	apiKey, ok := os.LookupEnv("OPENAI_API_KEY")
+	if !ok || strings.TrimSpace(apiKey) == "" {
+		panic("OPENAI_API_KEY environment variable is not set")
 	}
 
-	ollamaService := ollama.NewOllamaService(url, client)
+	ollamaService := openai.NewOpenAIService(apiKey, client)
 
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -145,7 +145,7 @@ func InitServer(mux *http.ServeMux, dbService *database.DatabaseService) {
 	})
 
 	mux.HandleFunc("POST /api/chat", func(w http.ResponseWriter, r *http.Request) {
-		var chatReq ollama.OllamaChatRequest
+		var chatReq openai.OllamaChatRequest
 		if err := json.NewDecoder(r.Body).Decode(&chatReq); err != nil {
 			http.Error(w, "invalid json", http.StatusBadRequest)
 			return
@@ -210,14 +210,13 @@ func InitServer(mux *http.ServeMux, dbService *database.DatabaseService) {
 		var parsed agents.PlannerResponse
 		if err := json.Unmarshal([]byte(res), &parsed); err != nil {
 			http.Error(w, "failed to parse planner response", http.StatusBadGateway)
+			fmt.Println(err)
 			return
 		}
 
 		delegator := agents.CallDelegator()
 
-		fmt.Println(res)
-
-		res, err = delegator.Chat(parsed.Tasks[0], ollamaService, r.Context())
+		res, err = delegator.Chat(fmt.Sprintf("Here are your tasks:%v", parsed.Tasks), ollamaService, r.Context())
 
 		_ = json.NewEncoder(w).Encode(res)
 	})
