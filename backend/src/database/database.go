@@ -197,3 +197,36 @@ func (s *DatabaseService) UpdateSessionByID(id int64, update UpdateSession) (Ses
 
 	return s.GetSessionByID(id)
 }
+
+func (s *DatabaseService) DeleteSessionByID(id int64) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`
+		DELETE FROM messages
+		WHERE session_id = ?
+	`, id); err != nil {
+		return err
+	}
+
+	result, err := tx.Exec(`
+		DELETE FROM sessions
+		WHERE id = ?
+	`, id)
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+
+	return tx.Commit()
+}

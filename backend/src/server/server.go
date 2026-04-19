@@ -1,7 +1,6 @@
 package server
 
 import (
-	"database/sql"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -89,11 +88,7 @@ func InitServer(mux *http.ServeMux, dbService *database.DatabaseService) {
 
 		session, err := dbService.GetSessionByID(id)
 		if err != nil {
-			if err == sql.ErrNoRows {
-				http.Error(w, "session not found", http.StatusNotFound)
-				return
-			}
-			http.Error(w, "failed to fetch session", http.StatusBadGateway)
+			http.Error(w, "session not found", http.StatusNotFound)
 			return
 		}
 
@@ -118,14 +113,27 @@ func InitServer(mux *http.ServeMux, dbService *database.DatabaseService) {
 
 		session, err := dbService.UpdateSessionByID(id, update)
 		if err != nil {
-			if err == sql.ErrNoRows {
-				http.Error(w, "session not found", http.StatusNotFound)
-				return
-			}
-			http.Error(w, "failed to update session", http.StatusBadGateway)
+			http.Error(w, "session not found", http.StatusNotFound)
 			return
 		}
 
 		_ = json.NewEncoder(w).Encode(session)
+	})
+
+	mux.HandleFunc("DELETE /api/sessions/{id}", func(w http.ResponseWriter, r *http.Request) {
+		idParam := r.PathValue("id")
+		id, err := strconv.ParseInt(idParam, 10, 64)
+		if err != nil {
+			http.Error(w, "invalid session id", http.StatusBadRequest)
+			return
+		}
+
+		err = dbService.DeleteSessionByID(id)
+		if err != nil {
+			http.Error(w, "session not found", http.StatusNotFound)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
 	})
 }
