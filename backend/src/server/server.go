@@ -12,7 +12,9 @@ import (
 )
 
 func InitServer(mux *http.ServeMux, dbService *database.DatabaseService) {
-	client := &http.Client{Timeout: 5 * time.Second}
+	// No global timeout — streaming chat responses can take arbitrarily long.
+	// Request-level context (r.Context()) handles cancellation when the client disconnects.
+	client := &http.Client{}
 	url, ok := os.LookupEnv("OLLAMA_BASE_URL")
 	if !ok || strings.TrimSpace(url) == "" {
 		panic("OLLAMA_BASE_URL environment variable is not set")
