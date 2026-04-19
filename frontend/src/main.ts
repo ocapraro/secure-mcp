@@ -293,6 +293,25 @@ function syncEmptyState() {
 
 let scrollMainRaf: number | null = null;
 
+/** Pixels from the bottom of `.main-scroll` still treated as “at bottom” for follow mode. */
+const MAIN_SCROLL_BOTTOM_SLACK_PX = 80;
+
+function isMainScrollNearBottom(): boolean {
+  const el = mainScrollEl;
+  return el.scrollHeight - el.scrollTop - el.clientHeight <= MAIN_SCROLL_BOTTOM_SLACK_PX;
+}
+
+/** When true, new tokens keep the view pinned to the bottom; set false when the user scrolls up. */
+let stickMainScrollToBottom = true;
+
+mainScrollEl.addEventListener(
+  "scroll",
+  () => {
+    stickMainScrollToBottom = isMainScrollNearBottom();
+  },
+  { passive: true },
+);
+
 function scrollMainToBottom(behavior: ScrollBehavior = "auto") {
   mainScrollEl.scrollTo({ top: mainScrollEl.scrollHeight, behavior });
 }
@@ -302,6 +321,15 @@ function scheduleScrollMainToBottom() {
   scrollMainRaf = requestAnimationFrame(() => {
     scrollMainRaf = null;
     scrollMainToBottom("auto");
+  });
+}
+
+/** Auto-scroll only while the user has not scrolled away from the latest messages. */
+function scheduleScrollMainToBottomIfStuck() {
+  if (scrollMainRaf != null) return;
+  scrollMainRaf = requestAnimationFrame(() => {
+    scrollMainRaf = null;
+    if (stickMainScrollToBottom) scrollMainToBottom("auto");
   });
 }
 
@@ -334,6 +362,7 @@ function rerender() {
   messagesEl.replaceChildren();
   for (const m of history) renderMessage(m);
   syncEmptyState();
+  stickMainScrollToBottom = true;
   scheduleScrollMainToBottom();
 }
 
@@ -489,6 +518,7 @@ formEl.addEventListener("submit", (e) => {
   msgs.push({ role: "user", content: text });
   if (chatId === activeChatId) {
     renderMessage(msgs[msgs.length - 1]!);
+    stickMainScrollToBottom = true;
     scheduleScrollMainToBottom();
   }
   promptEl.value = "";
@@ -546,7 +576,7 @@ formEl.addEventListener("submit", (e) => {
 
       if (chatId === activeChatId) {
         renderMessage(assistant);
-        scheduleScrollMainToBottom();
+        scheduleScrollMainToBottomIfStuck();
       }
 
       await pumpOllamaNdjsonStream(res.body, (piece) => {
@@ -557,7 +587,7 @@ formEl.addEventListener("submit", (e) => {
             bodyEl.classList.add("md");
             bodyEl.innerHTML = renderAssistantHtml(assistant.content);
           }
-          scheduleScrollMainToBottom();
+          scheduleScrollMainToBottomIfStuck();
         }
       });
 
@@ -569,7 +599,9 @@ formEl.addEventListener("submit", (e) => {
       }
       void refreshSessionList();
       if (chatId === activeChatId) {
-        queueMicrotask(() => scrollMainToBottom("auto"));
+        queueMicrotask(() => {
+          if (stickMainScrollToBottom) scrollMainToBottom("auto");
+        });
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
