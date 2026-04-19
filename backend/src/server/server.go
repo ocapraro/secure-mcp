@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -203,7 +204,20 @@ func InitServer(mux *http.ServeMux, dbService *database.DatabaseService) {
 		res, err := agents.CallPlanner().Chat("how many red solo cups do americans eat a year?", ollamaService, r.Context())
 		if err != nil {
 			http.Error(w, "failed", http.StatusInternalServerError)
+			return
 		}
+
+		var parsed agents.PlannerResponse
+		if err := json.Unmarshal([]byte(res), &parsed); err != nil {
+			http.Error(w, "failed to parse planner response", http.StatusBadGateway)
+			return
+		}
+
+		delegator := agents.CallDelegator()
+
+		fmt.Println(res)
+
+		res, err = delegator.Chat(parsed.Tasks[0], ollamaService, r.Context())
 
 		_ = json.NewEncoder(w).Encode(res)
 	})

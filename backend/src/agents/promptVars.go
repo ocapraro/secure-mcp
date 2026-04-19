@@ -1,3 +1,4 @@
 package agents
 
-var requestFormat = "\n```json\n{\"request\": string}\n```\n"
+var requestFormat = "`{\"request\": string}`"
+var taskFormat = "`{\"task\": string}`"

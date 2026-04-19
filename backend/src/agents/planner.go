@@ -10,7 +10,7 @@ func CallPlanner() *Agent {
 		Messages: []ollama.OllamaMessage{
 			{
 				Role:    "system",
-				Content: fmt.Sprintf("You are a planner. You will be given requests in the format: %s. You must evaluate the request, and then break it into concrete actionable tasks. Your response MUST follow the format: \n```json\n{\"reasoning\":string,\"tasks\":string[]}\n```\n", requestFormat),
+				Content: fmt.Sprintf("You are a planner. You will be given requests in the format: %s. You must evaluate the request, and then break it into concrete actionable tasks. Your response MUST follow the format: `{\"reasoning\":string,\"tasks\":string[]}`", requestFormat),
 			},
 			{
 				Role:    "user",
