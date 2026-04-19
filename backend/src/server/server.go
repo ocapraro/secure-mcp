@@ -5,7 +5,10 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"smcp/agents"
 	"smcp/database"
+	"smcp/ollama"
+	"smcp/types"
 	"strconv"
 	"strings"
 	"time"
@@ -20,11 +23,11 @@ func InitServer(mux *http.ServeMux, dbService *database.DatabaseService) {
 		panic("OLLAMA_BASE_URL environment variable is not set")
 	}
 
-	ollamaService := NewOllamaService(url, client)
+	ollamaService := ollama.NewOllamaService(url, client)
 
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(HealthResponse{
+		_ = json.NewEncoder(w).Encode(types.HealthResponse{
 			Status: "ok",
 		})
 	})
@@ -42,7 +45,7 @@ func InitServer(mux *http.ServeMux, dbService *database.DatabaseService) {
 			http.Error(w, "failed to fetch models from Ollama", http.StatusBadGateway)
 			return
 		}
-		var models ModelsResponse
+		var models types.ModelsResponse
 		for _, model := range ollamaModels.Models {
 			models.Models = append(models.Models, model.Name)
 		}
@@ -141,7 +144,7 @@ func InitServer(mux *http.ServeMux, dbService *database.DatabaseService) {
 	})
 
 	mux.HandleFunc("POST /api/chat", func(w http.ResponseWriter, r *http.Request) {
-		var chatReq ChatRequest
+		var chatReq ollama.OllamaChatRequest
 		if err := json.NewDecoder(r.Body).Decode(&chatReq); err != nil {
 			http.Error(w, "invalid json", http.StatusBadRequest)
 			return
@@ -193,5 +196,15 @@ func InitServer(mux *http.ServeMux, dbService *database.DatabaseService) {
 				return
 			}
 		}
+	})
+
+	mux.HandleFunc("GET /api/test", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		res, err := agents.TeamBuilder.Chat("how hot is it in rochester today?", ollamaService, r.Context())
+		if err != nil {
+			http.Error(w, "failed", http.StatusInternalServerError)
+		}
+
+		_ = json.NewEncoder(w).Encode(res)
 	})
 }

@@ -2,7 +2,6 @@ package database
 
 import "time"
 
-// ====== Sessions ========
 type CreateSession struct {
 	Title string `json:"title"`
 	Model string `json:"model"`
@@ -39,5 +38,3 @@ type Session struct {
 	PartialSession
 	Messages []Message `json:"messages"`
 }
-
-// ======= Agents ========

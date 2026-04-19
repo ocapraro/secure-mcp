@@ -1,17 +1,15 @@
-package server
+package ollama
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"smcp/types"
+	"strings"
 )
-
-type OllamaService struct {
-	baseURL string
-	client  *http.Client
-}
 
 func NewOllamaService(baseURL string, client *http.Client) *OllamaService {
 	return &OllamaService{
@@ -29,16 +27,16 @@ func (s *OllamaService) get(endpoint string, ctx context.Context) (*http.Respons
 	return s.client.Do(req)
 }
 
-func (s *OllamaService) GetHealth(ctx context.Context) HealthResponse {
+func (s *OllamaService) GetHealth(ctx context.Context) types.HealthResponse {
 	resp, err := s.get("", ctx)
 	if err != nil || resp.StatusCode != 200 {
-		return HealthResponse{
+		return types.HealthResponse{
 			Status: "not ok",
 		}
 	}
 	defer resp.Body.Close()
 
-	return HealthResponse{
+	return types.HealthResponse{
 		Status: "ok",
 	}
 }
@@ -61,7 +59,7 @@ func (s *OllamaService) GetModels(ctx context.Context) (OllamaModelsResponse, er
 	return result, nil
 }
 
-func (s *OllamaService) SendChat(ctx context.Context, req ChatRequest) (*http.Response, error) {
+func (s *OllamaService) SendChat(ctx context.Context, req OllamaChatRequest) (*http.Response, error) {
 	if req.Model == "" {
 		return nil, fmt.Errorf("model is required")
 	}
@@ -88,4 +86,40 @@ func (s *OllamaService) SendChat(ctx context.Context, req ChatRequest) (*http.Re
 	httpReq.Header.Set("Content-Type", "application/json")
 
 	return s.client.Do(httpReq)
+}
+
+// SendChatPatiently sends a chat request and returns the complete response string
+func (s *OllamaService) SendChatPatiently(ctx context.Context, req OllamaChatRequest) (string, error) {
+	resp, err := s.SendChat(ctx, req)
+	if err != nil {
+		return "", fmt.Errorf("failed to send chat: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("ollama returned status %d", resp.StatusCode)
+	}
+
+	// Parse NDJSON stream response
+	var fullResponse strings.Builder
+	scanner := bufio.NewScanner(resp.Body)
+
+	for scanner.Scan() {
+		var line OllamaStreamLine
+		if err := json.Unmarshal(scanner.Bytes(), &line); err != nil {
+			continue // Skip malformed lines
+		}
+		if line.Message.Content != "" {
+			fullResponse.WriteString(line.Message.Content)
+		}
+		if line.Done {
+			break
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return "", fmt.Errorf("error reading response: %w", err)
+	}
+
+	return fullResponse.String(), nil
 }

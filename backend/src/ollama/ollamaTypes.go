@@ -1,22 +1,7 @@
-package server
+package ollama
 
-import "smcp/database"
+import "net/http"
 
-type HealthResponse struct {
-	Status string `json:"status"`
-}
-
-type ModelsResponse struct {
-	Models []string `json:"models"`
-}
-
-type ChatRequest struct {
-	Model    string             `json:"model"`
-	Messages []database.Message `json:"messages"`
-	Stream   bool               `json:"stream,omitempty"`
-}
-
-// ========= Ollama Responses ===========
 type OllamaModelsResponse struct {
 	Models []OllamaModel `json:"models"`
 }
@@ -42,4 +27,20 @@ type OllamaModelDetails struct {
 type OllamaMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
+}
+
+type OllamaStreamLine struct {
+	Message OllamaMessage `json:"message"`
+	Done    bool          `json:"done"`
+}
+
+type OllamaService struct {
+	baseURL string
+	client  *http.Client
+}
+
+type OllamaChatRequest struct {
+	Model    string          `json:"model"`
+	Messages []OllamaMessage `json:"messages"`
+	Stream   bool            `json:"stream,omitempty"`
 }
