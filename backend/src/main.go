@@ -10,7 +10,7 @@ import (
 func main() {
 	dbService, err := database.NewDatabaseService("../data/app.db")
 	if err != nil {
-		panic("Failed to connect to the database")
+		log.Fatal(err)
 	}
 	defer dbService.Close()
 
