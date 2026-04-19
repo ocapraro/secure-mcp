@@ -1,3 +1,6 @@
 .DS_Store
 .env
 data/
+
+
+backend/specialists/shared-scripts/*.py
