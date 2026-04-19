@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<specialist>
+  <name>Weather Man</name>
+  <resume>Hi I'm Weather Man! I have a whole bunch of weather sensors, so I can tell you what the weather is anywhere in the world.</resume>
+  <exampleRequest>Identify the weather in boston</exampleRequest>
+  <plugins>
+    <script>
+      <path>scripts/get-weather.py</path>
+      <description>Fetches the current weather conditions for a given location.</description>
+      <usage>python scripts/get-weather.py &lt;location&gt;</usage>
+      <arguments>
+        <argument name="location" required="true">The city or place to look up. Accepts multi-word names (e.g., "New York" or "Boston MA").</argument>
+      </arguments>
+      <output>JSON object with fields: location, temp_c, temp_f, feels_like_c, feels_like_f, humidity_pct, wind_speed_kmph, wind_direction, visibility_km, description, uv_index.</output>
+      <example>python scripts/get-weather.py Boston</example>
+    </script>
+    <script>
+      <path>scripts/fetch-forecast.py</path>
+      <description>Fetches a 3-day weather forecast for a given location, including hourly breakdowns.</description>
+      <usage>python scripts/fetch-forecast.py &lt;location&gt;</usage>
+      <arguments>
+        <argument name="location" required="true">The city or place to look up. Accepts multi-word names (e.g., "Los Angeles" or "London UK").</argument>
+      </arguments>
+      <output>JSON object with fields: location, forecast_days[]. Each day includes: date, max_temp_c, max_temp_f, min_temp_c, min_temp_f, avg_humidity_pct, sunrise, sunset, and hourly[] with time, temp_c, temp_f, feels_like_c, feels_like_f, chance_of_rain_pct, chance_of_snow_pct, wind_speed_kmph, description.</output>
+      <example>python scripts/fetch-forecast.py Tokyo</example>
+    </script>
+  </plugins>
+</specialist>

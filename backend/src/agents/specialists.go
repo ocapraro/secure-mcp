@@ -1,28 +1,65 @@
 package agents
 
-type Specialist struct {
-	Name           string
-	Resume         string
-	ExampleRequest string
-	// Plugins
+import (
+	"encoding/xml"
+	"log"
+	"os"
+	"path/filepath"
+)
+
+type ScriptArgument struct {
+	Name     string `xml:"name,attr"`
+	Required string `xml:"required,attr"`
+	Value    string `xml:",chardata"`
 }
 
+type Plugin struct {
+	Path        string           `xml:"path"`
+	Description string           `xml:"description"`
+	Usage       string           `xml:"usage"`
+	Arguments   []ScriptArgument `xml:"arguments>argument"`
+	Output      string           `xml:"output"`
+	Example     string           `xml:"example"`
+}
+
+type Specialist struct {
+	Name           string   `xml:"name"`
+	Resume         string   `xml:"resume"`
+	ExampleRequest string   `xml:"exampleRequest"`
+	Plugins        []Plugin `xml:"plugins>script"`
+}
+
+type specialistXML struct {
+	XMLName xml.Name `xml:"specialist"`
+	Specialist
+}
+
+const specialistsDir = "../specialists"
+
 func ListSpecialists() []Specialist {
-	return []Specialist{
-		{
-			Name:           "Weather Man",
-			Resume:         "Hi I'm Weather Man! I have a whole bunch of weather sensors, so I can tell you what the weather is anywhere in the world.",
-			ExampleRequest: "Identify the weather in boston",
-		},
-		{
-			Name:           "User Expect",
-			Resume:         "Hello I'm User Expert! I keep information about the user, their likes, dislikes, name, age, etc.",
-			ExampleRequest: "Clarify user's diet",
-		},
-		{
-			Name:           "Wikipedia",
-			Resume:         "Greetings. I am Wikipedia. I hold various trivia and facts about pretty much everything.",
-			ExampleRequest: "Find the 61st US president.",
-		},
+	entries, err := os.ReadDir(specialistsDir)
+	if err != nil {
+		log.Printf("warning: could not read specialists directory: %v", err)
+		return nil
 	}
+
+	var specialists []Specialist
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		bioPath := filepath.Join(specialistsDir, entry.Name(), "bio.xml")
+		data, err := os.ReadFile(bioPath)
+		if err != nil {
+			log.Printf("warning: skipping %s: %v", bioPath, err)
+			continue
+		}
+		var s specialistXML
+		if err := xml.Unmarshal(data, &s); err != nil {
+			log.Printf("warning: failed to parse %s: %v", bioPath, err)
+			continue
+		}
+		specialists = append(specialists, s.Specialist)
+	}
+	return specialists
 }

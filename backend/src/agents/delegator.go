@@ -6,6 +6,18 @@ import (
 	"strings"
 )
 
+func CallGeneralist() *Agent {
+	return &Agent{
+		Messages: []openai.OllamaMessage{
+			{
+				Role:    "system",
+				Content: "You are a helpful generalist assistant. Answer the user's task as concisely and accurately as possible.",
+			},
+		},
+		Model: MEDIUM_MODEL,
+	}
+}
+
 func CallDelegator() *Agent {
 	specialists := ListSpecialists()
 	var specialistsSection strings.Builder

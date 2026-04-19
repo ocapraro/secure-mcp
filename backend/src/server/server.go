@@ -201,23 +201,87 @@ func InitServer(mux *http.ServeMux, dbService *database.DatabaseService) {
 
 	mux.HandleFunc("GET /api/test", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		res, err := agents.CallPlanner().Chat("how many red solo cups do americans eat a year?", ollamaService, r.Context())
+		res, err := agents.CallPlanner().Chat("I'm planning a trip to japan, when should i go this year?", ollamaService, r.Context())
 		if err != nil {
 			http.Error(w, "failed", http.StatusInternalServerError)
 			return
 		}
 
-		var parsed agents.PlannerResponse
-		if err := json.Unmarshal([]byte(res), &parsed); err != nil {
+		var planned agents.PlannerResponse
+		if err := json.Unmarshal([]byte(res), &planned); err != nil {
 			http.Error(w, "failed to parse planner response", http.StatusBadGateway)
-			fmt.Println(err)
 			return
 		}
 
-		delegator := agents.CallDelegator()
+		delegRes, err := agents.CallDelegator().Chat(fmt.Sprintf("Here are your tasks:%v", planned.Tasks), ollamaService, r.Context())
+		if err != nil {
+			http.Error(w, "delegator failed", http.StatusInternalServerError)
+			return
+		}
 
-		res, err = delegator.Chat(fmt.Sprintf("Here are your tasks:%v", parsed.Tasks), ollamaService, r.Context())
+		// Strip markdown fences that some models wrap around JSON.
+		delegRes = strings.TrimSpace(delegRes)
+		if strings.HasPrefix(delegRes, "```") {
+			delegRes = strings.Trim(delegRes, "`")
+			delegRes = strings.TrimPrefix(delegRes, "json")
+			delegRes = strings.TrimSpace(delegRes)
+		}
 
-		_ = json.NewEncoder(w).Encode(res)
+		var delegated agents.DelegatorResponse
+		if err := json.Unmarshal([]byte(delegRes), &delegated); err != nil {
+			http.Error(w, "failed to parse delegator response", http.StatusBadGateway)
+			return
+		}
+
+		// Build a name→Specialist lookup for fast dispatch.
+		specialistList := agents.ListSpecialists()
+		specialistMap := make(map[string]agents.Specialist, len(specialistList))
+		for _, s := range specialistList {
+			specialistMap[strings.ToLower(s.Name)] = s
+		}
+
+		type taskResult struct {
+			Task     string `json:"task"`
+			Assignee string `json:"assignee"`
+			Answer   string `json:"answer"`
+			Error    string `json:"error,omitempty"`
+		}
+
+		results := make([]taskResult, 0, len(delegated.Assignments))
+
+		for _, assignment := range delegated.Assignments {
+			tr := taskResult{Task: assignment.Task, Assignee: assignment.Assignee}
+
+			assigneeLower := strings.ToLower(assignment.Assignee)
+
+			if assigneeLower == "generalist" {
+				// Plain chat — no specialist agent.
+				answer, err := agents.CallGeneralist().Chat(assignment.Task, ollamaService, r.Context())
+				if err != nil {
+					tr.Error = err.Error()
+				} else {
+					tr.Answer = answer
+				}
+			} else if s, ok := specialistMap[assigneeLower]; ok {
+				answer, err := agents.RunSpecialistTask(s, assignment.Task, ollamaService, r.Context())
+				if err != nil {
+					tr.Error = err.Error()
+				} else {
+					tr.Answer = answer
+				}
+			} else {
+				// Unknown assignee — fall back to generalist.
+				answer, err := agents.CallGeneralist().Chat(assignment.Task, ollamaService, r.Context())
+				if err != nil {
+					tr.Error = err.Error()
+				} else {
+					tr.Answer = answer
+				}
+			}
+
+			results = append(results, tr)
+		}
+
+		_ = json.NewEncoder(w).Encode(results)
 	})
 }
