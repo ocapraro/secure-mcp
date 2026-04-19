@@ -200,7 +200,7 @@ func InitServer(mux *http.ServeMux, dbService *database.DatabaseService) {
 
 	mux.HandleFunc("GET /api/test", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		res, err := agents.TeamBuilder.Chat("how hot is it in rochester today?", ollamaService, r.Context())
+		res, err := agents.CallPlanner().Chat("how many red solo cups do americans eat a year?", ollamaService, r.Context())
 		if err != nil {
 			http.Error(w, "failed", http.StatusInternalServerError)
 		}
