@@ -160,9 +160,11 @@ func (s *DatabaseService) UpdateSessionByID(id int64, update UpdateSession) (Ses
 
 	result, err := tx.Exec(`
 		UPDATE sessions
-		SET model = ?, updated_at = CURRENT_TIMESTAMP
+		SET model = ?,
+		    title = CASE WHEN ? != '' THEN ? ELSE title END,
+		    updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
-	`, update.Model, id)
+	`, update.Model, update.Title, update.Title, id)
 	if err != nil {
 		return Session{}, err
 	}

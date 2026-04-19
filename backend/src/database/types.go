@@ -8,6 +8,7 @@ type CreateSession struct {
 }
 
 type UpdateSession struct {
+	Title    string    `json:"title"`
 	Model    string    `json:"model"`
 	Messages []Message `json:"messages"`
 }
