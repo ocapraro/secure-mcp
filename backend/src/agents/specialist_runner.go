@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os/exec"
 	"path/filepath"
 	"smcp/openai"
@@ -144,7 +143,7 @@ func runDockerScript(specialistDir, scriptCall string) (string, error) {
 
 // RunSpecialistTask runs the specialist agent for a single task, executing
 // selected scripts via Docker, and returns raw script outputs.
-func RunSpecialistTask(s Specialist, task string, openaiService *openai.OpenAIService, ctx context.Context) (string, error) {
+func RunSpecialistTask(s Specialist, task string, openaiService *openai.OpenAIService, ctx context.Context, emit func(string)) (string, error) {
 	agent := CallSpecialist(s)
 
 	specialistDirName := strings.ToLower(strings.ReplaceAll(s.Name, " ", "-"))
@@ -155,7 +154,9 @@ func RunSpecialistTask(s Specialist, task string, openaiService *openai.OpenAISe
 	if err != nil {
 		return "", fmt.Errorf("specialist %s error: %w", s.Name, err)
 	}
-	log.Printf("[specialist-response][%s] %s", s.Name, strings.TrimSpace(raw))
+	if emit != nil {
+		emit(fmt.Sprintf("#### %s response\n```json\n%s\n```\n\n", s.Name, strings.TrimSpace(raw)))
+	}
 
 	plan, err := parseScriptPlan(raw)
 	if err != nil {
@@ -175,7 +176,9 @@ func RunSpecialistTask(s Specialist, task string, openaiService *openai.OpenAISe
 		retryRaw, retryErr := agent.Chat(retryMessage, openaiService, ctx)
 		if retryErr != nil {
 		} else {
-			log.Printf("[specialist-response][%s] %s", s.Name, strings.TrimSpace(retryRaw))
+			if emit != nil {
+				emit(fmt.Sprintf("#### %s retry response\n```json\n%s\n```\n\n", s.Name, strings.TrimSpace(retryRaw)))
+			}
 			retryPlan, parseErr := parseScriptPlan(retryRaw)
 			if parseErr == nil {
 				plan = retryPlan
@@ -187,7 +190,18 @@ func RunSpecialistTask(s Specialist, task string, openaiService *openai.OpenAISe
 		fallback := fallbackScriptCall(allowed, task)
 		if fallback != "" {
 			plan.Scripts = []string{fallback}
+			if emit != nil {
+				emit(fmt.Sprintf("Fallback script selected: `%s`\n\n", fallback))
+			}
 		}
+	}
+
+	if emit != nil && len(plan.Scripts) > 0 {
+		emit("#### Scripts selected\n")
+		for _, call := range plan.Scripts {
+			emit(fmt.Sprintf("- `%s`\n", strings.TrimSpace(call)))
+		}
+		emit("\n")
 	}
 
 	results := make([]ScriptExecutionResult, 0, len(plan.Scripts))
@@ -203,14 +217,26 @@ func RunSpecialistTask(s Specialist, task string, openaiService *openai.OpenAISe
 		scriptName := normalizeScriptName(first[0])
 		if _, ok := allowed[scriptName]; !ok {
 			errMsg := fmt.Sprintf("script %q is not allowed for specialist %q", scriptName, s.Name)
+			if emit != nil {
+				emit(fmt.Sprintf("Script rejected: `%s`\n\n", call))
+			}
 			results = append(results, ScriptExecutionResult{Script: call, Error: errMsg})
 			continue
 		}
 
+		if emit != nil {
+			emit(fmt.Sprintf("Running `%s`\n\n", call))
+		}
 		output, scriptErr := runDockerScript(specialistDir, call)
 		if scriptErr != nil {
+			if emit != nil {
+				emit(fmt.Sprintf("Script error for `%s`\n```text\n%s\n```\n\n", call, scriptErr.Error()))
+			}
 			results = append(results, ScriptExecutionResult{Script: call, Error: scriptErr.Error()})
 			continue
+		}
+		if emit != nil {
+			emit(fmt.Sprintf("Output for `%s`\n```json\n%s\n```\n\n", call, strings.TrimSpace(output)))
 		}
 		results = append(results, ScriptExecutionResult{Script: call, Output: output})
 	}
