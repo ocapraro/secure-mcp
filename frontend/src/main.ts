@@ -44,9 +44,17 @@ const recentsListEl = requireEl<HTMLUListElement>("#recentsList");
 const chatContextMenuEl = requireEl<HTMLDivElement>("#chatContextMenu");
 const chatContextRenameEl = requireEl<HTMLButtonElement>("#chatContextRename");
 const chatContextDeleteEl = requireEl<HTMLButtonElement>("#chatContextDelete");
+const messageContextMenuEl = requireEl<HTMLDivElement>("#messageContextMenu");
+const messageContextEditEl = requireEl<HTMLButtonElement>("#messageContextEdit");
+const editMessageModalEl = requireEl<HTMLDivElement>("#editMessageModal");
+const editMessageTextEl = requireEl<HTMLTextAreaElement>("#editMessageText");
+const editMessageCloseEl = requireEl<HTMLButtonElement>("#editMessageClose");
+const editMessageCancelEl = requireEl<HTMLButtonElement>("#editMessageCancel");
+const editMessageSaveEl = requireEl<HTMLButtonElement>("#editMessageSave");
 const sidebarToggleEl = document.querySelector<HTMLButtonElement>("#sidebarToggle");
 
 let contextMenuSessionId: string | null = null;
+let editingMessageIndex: number | null = null;
 
 /** Messages per session (mutable arrays; same ref as `history` when that session is active). */
 const sessionMessages = new Map<string, ChatMessage[]>();
@@ -118,6 +126,78 @@ function hideChatContextMenu() {
   contextMenuSessionId = null;
   chatContextMenuEl.hidden = true;
   chatContextMenuEl.setAttribute("aria-hidden", "true");
+}
+
+function hideMessageContextMenu() {
+  messageContextMenuEl.hidden = true;
+  messageContextMenuEl.setAttribute("aria-hidden", "true");
+}
+
+function showMessageContextMenuAt(clientX: number, clientY: number, messageIndex: number) {
+  editingMessageIndex = messageIndex;
+  messageContextMenuEl.hidden = false;
+  messageContextMenuEl.setAttribute("aria-hidden", "false");
+  messageContextMenuEl.style.left = `${clientX}px`;
+  messageContextMenuEl.style.top = `${clientY}px`;
+  requestAnimationFrame(() => {
+    const rect = messageContextMenuEl.getBoundingClientRect();
+    const pad = 6;
+    let left = clientX;
+    let top = clientY;
+    if (rect.right > window.innerWidth - pad) {
+      left = window.innerWidth - rect.width - pad;
+    }
+    if (rect.bottom > window.innerHeight - pad) {
+      top = window.innerHeight - rect.height - pad;
+    }
+    if (left < pad) left = pad;
+    if (top < pad) top = pad;
+    messageContextMenuEl.style.left = `${left}px`;
+    messageContextMenuEl.style.top = `${top}px`;
+  });
+}
+
+function hideEditMessageModal() {
+  editingMessageIndex = null;
+  editMessageModalEl.hidden = true;
+  editMessageModalEl.setAttribute("aria-hidden", "true");
+}
+
+function showEditMessageModal() {
+  if (editingMessageIndex === null || editingMessageIndex >= history.length) return;
+  const msg = history[editingMessageIndex];
+  if (!msg) return;
+  editMessageTextEl.value = msg.content;
+  editMessageModalEl.hidden = false;
+  editMessageModalEl.setAttribute("aria-hidden", "false");
+  queueMicrotask(() => {
+    editMessageTextEl.focus();
+    editMessageTextEl.select();
+  });
+}
+
+async function saveEditedMessage() {
+  if (editingMessageIndex === null || !activeChatId) return;
+  const msg = history[editingMessageIndex];
+  if (!msg) return;
+
+  const newContent = editMessageTextEl.value.trim();
+  if (newContent === msg.content) {
+    hideEditMessageModal();
+    return;
+  }
+
+  try {
+    msg.content = newContent;
+    rerender();
+    hideEditMessageModal();
+    await persistActiveSession();
+    setStatus("Message updated");
+    queueMicrotask(() => setStatus(""));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to save message";
+    setStatus(message, "error");
+  }
 }
 
 function showChatContextMenuAt(clientX: number, clientY: number, sessionId: string) {
@@ -341,9 +421,11 @@ function activeStreamingAssistantBodyEl(): HTMLElement | null {
   return body instanceof HTMLElement ? body : null;
 }
 
-function renderMessage(msg: ChatMessage) {
+function renderMessage(msg: ChatMessage, index: number) {
   const wrap = document.createElement("div");
   wrap.className = `msg ${msg.role}`;
+  wrap.style.cursor = "context-menu";
+  wrap.setAttribute("data-message-index", String(index));
 
   const body = document.createElement("div");
   if (msg.role === "assistant") {
@@ -355,12 +437,22 @@ function renderMessage(msg: ChatMessage) {
   }
 
   wrap.append(body);
+  
+  // Add context menu handler
+  wrap.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    const msgIndex = parseInt((e.currentTarget as HTMLElement).getAttribute("data-message-index") || "0", 10);
+    showMessageContextMenuAt(e.clientX, e.clientY, msgIndex);
+  });
+
   messagesEl.append(wrap);
 }
 
 function rerender() {
   messagesEl.replaceChildren();
-  for (const m of history) renderMessage(m);
+  for (let i = 0; i < history.length; i++) {
+    renderMessage(history[i]!, i);
+  }
   syncEmptyState();
   stickMainScrollToBottom = true;
   scheduleScrollMainToBottom();
@@ -407,6 +499,30 @@ async function pumpOllamaNdjsonStream(
   const piece = chunk.message?.content ?? "";
   if (piece) onDelta(piece);
 }
+
+messageContextEditEl.addEventListener("click", () => {
+  hideMessageContextMenu();
+  showEditMessageModal();
+});
+
+editMessageSaveEl.addEventListener("click", () => {
+  void saveEditedMessage();
+});
+
+editMessageCloseEl.addEventListener("click", () => {
+  hideEditMessageModal();
+});
+
+editMessageCancelEl.addEventListener("click", () => {
+  hideEditMessageModal();
+});
+
+editMessageTextEl.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && e.ctrlKey) {
+    e.preventDefault();
+    void saveEditedMessage();
+  }
+});
 
 chatContextRenameEl.addEventListener("click", () => {
   void (async () => {
@@ -480,15 +596,31 @@ chatContextDeleteEl.addEventListener("click", () => {
 document.addEventListener(
   "pointerdown",
   (e) => {
-    if (chatContextMenuEl.hidden) return;
-    if (chatContextMenuEl.contains(e.target as Node)) return;
-    hideChatContextMenu();
+    // Close message context menu if open
+    if (!messageContextMenuEl.hidden && !messageContextMenuEl.contains(e.target as Node)) {
+      hideMessageContextMenu();
+    }
+    // Close chat context menu if open
+    if (!chatContextMenuEl.hidden && !chatContextMenuEl.contains(e.target as Node)) {
+      hideChatContextMenu();
+    }
+    // Close edit modal if clicking the overlay
+    if (!editMessageModalEl.hidden) {
+      const modalContent = editMessageModalEl.querySelector(".modal-content");
+      if (!modalContent?.contains(e.target as Node)) {
+        hideEditMessageModal();
+      }
+    }
   },
   true,
 );
 
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") hideChatContextMenu();
+  if (e.key === "Escape") {
+    hideMessageContextMenu();
+    hideChatContextMenu();
+    hideEditMessageModal();
+  }
 });
 
 newChatEl.addEventListener("click", () => {
@@ -551,7 +683,8 @@ formEl.addEventListener("submit", (e) => {
 
   msgs.push({ role: "user", content: text });
   if (chatId === activeChatId) {
-    renderMessage(msgs[msgs.length - 1]!);
+    renderMessage(msgs[msgs.length - 1]!, msgs.length - 1);
+    syncEmptyState();
     stickMainScrollToBottom = true;
     scheduleScrollMainToBottom();
   }
@@ -609,7 +742,8 @@ formEl.addEventListener("submit", (e) => {
       msgs.push(assistant);
 
       if (chatId === activeChatId) {
-        renderMessage(assistant);
+        renderMessage(assistant, msgs.length - 1);
+        syncEmptyState();
         scheduleScrollMainToBottomIfStuck();
       }
 

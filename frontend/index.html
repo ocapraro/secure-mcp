@@ -88,6 +88,47 @@
       </button>
     </div>
 
+    <div
+      id="messageContextMenu"
+      class="message-context-menu"
+      hidden
+      role="menu"
+      aria-hidden="true"
+    >
+      <button type="button" class="message-context-menu-item chat-context-menu-item--neutral" role="menuitem" id="messageContextEdit">
+        Edit message
+      </button>
+    </div>
+
+    <div
+      id="editMessageModal"
+      class="modal"
+      hidden
+      role="dialog"
+      aria-hidden="true"
+      aria-labelledby="editMessageTitle"
+    >
+      <div class="modal-overlay"></div>
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2 id="editMessageTitle">Edit message</h2>
+          <button type="button" class="modal-close" id="editMessageClose" aria-label="Close">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        </div>
+        <div class="modal-body">
+          <textarea id="editMessageText" class="edit-message-textarea" placeholder="Edit your message..."></textarea>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn-secondary" id="editMessageCancel">Cancel</button>
+          <button type="button" class="btn-primary" id="editMessageSave">Save</button>
+        </div>
+      </div>
+    </div>
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
