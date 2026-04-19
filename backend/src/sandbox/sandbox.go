@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -19,7 +21,17 @@ type VMMessage struct {
 	Output   string `json:"output,omitempty"`
 }
 
-func RunSandbox(ctx context.Context) ([]VMMessage, error) {
+func RunSandbox(ctx context.Context) (results []VMMessage, retErr error) {
+	defer func() {
+		if err := clearSharedScriptsDir(); err != nil {
+			if retErr != nil {
+				retErr = fmt.Errorf("%v; cleanup failed: %w", retErr, err)
+			} else {
+				retErr = fmt.Errorf("cleanup failed: %w", err)
+			}
+		}
+	}()
+
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 
@@ -56,7 +68,6 @@ func RunSandbox(ctx context.Context) ([]VMMessage, error) {
 	go scanLines(stdout, lines)
 	go scanLines(stderr, lines)
 
-	var results []VMMessage
 	var bootDone bool
 
 	done := make(chan error, 1)
@@ -80,9 +91,6 @@ func RunSandbox(ctx context.Context) ([]VMMessage, error) {
 			if line == "" {
 				continue
 			}
-
-			// Helpful for debugging
-			// fmt.Println("VM:", line)
 
 			// Ignore the noisy firmware/kernel boot output until we hit JSON
 			if !strings.HasPrefix(line, "{") {
@@ -110,6 +118,33 @@ func RunSandbox(ctx context.Context) ([]VMMessage, error) {
 			_ = bootDone
 		}
 	}
+}
+
+func clearSharedScriptsDir() error {
+	const sharedScriptsDir = "../specialists/shared-scripts"
+
+	entries, err := os.ReadDir(sharedScriptsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read shared scripts dir: %w", err)
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if filepath.Ext(entry.Name()) != ".py" {
+			continue
+		}
+		path := filepath.Join(sharedScriptsDir, entry.Name())
+		if err := os.Remove(path); err != nil {
+			return fmt.Errorf("remove %s: %w", path, err)
+		}
+	}
+
+	return nil
 }
 
 func scanLines(pipe interface{ Read([]byte) (int, error) }, out chan<- string) {
