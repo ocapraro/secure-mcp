@@ -1,14 +1,14 @@
 package agents
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
+	"os"
 	"path/filepath"
 	"smcp/openai"
 	"strings"
+	"time"
 )
 
 type SpecialistScriptPlan struct {
@@ -26,6 +26,11 @@ type SpecialistExecutionEnvelope struct {
 	Specialist string                  `json:"specialist"`
 	Task       string                  `json:"task"`
 	Results    []ScriptExecutionResult `json:"results"`
+}
+
+type StagedScript struct {
+	ScriptCall string `json:"scriptCall"`
+	StagedFile string `json:"stagedFile"`
 }
 
 // CallSpecialist builds an Agent primed as the given specialist.
@@ -93,7 +98,7 @@ func inferLocationFromTask(task string) string {
 	return "New York"
 }
 
-func fallbackScriptCall(allowed map[string]struct{}, task string) string {
+func fallbackScriptCall(allowed map[string]string, task string) string {
 	location := inferLocationFromTask(task)
 	if _, ok := allowed["fetch-forecast"]; ok {
 		return fmt.Sprintf("fetch-forecast %s", location)
@@ -107,52 +112,48 @@ func fallbackScriptCall(allowed map[string]struct{}, task string) string {
 	return ""
 }
 
-// runDockerScript executes a specialist's plugin via its Dockerfile image.
-// scriptCall is the script filename (no path) plus arguments, e.g. "get-weather Boston MA".
-func runDockerScript(specialistDir, scriptCall string) (string, error) {
-	parts := strings.SplitN(scriptCall, " ", 2)
-	scriptName := strings.TrimSuffix(parts[0], ".py")
-	location := ""
-	if len(parts) > 1 {
-		location = parts[1]
+func buildScriptArgInjector(args []string) (string, error) {
+	if len(args) == 0 {
+		return "", nil
 	}
-
-	dirParts := strings.Split(specialistDir, "/")
-	imageName := strings.ToLower(dirParts[len(dirParts)-1])
-
-	buildCmd := exec.Command("docker", "build", "-t", imageName, specialistDir)
-	if out, err := buildCmd.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("docker build failed: %v\n%s", err, out)
+	b, err := json.Marshal(args)
+	if err != nil {
+		return "", err
 	}
-
-	runArgs := []string{"run", "--rm", "-e", fmt.Sprintf("SCRIPT=%s", scriptName)}
-	if location != "" {
-		runArgs = append(runArgs, "-e", fmt.Sprintf("LOCATION=%s", location))
-	}
-	runArgs = append(runArgs, imageName)
-
-	var stdout, stderr bytes.Buffer
-	runCmd := exec.Command("docker", runArgs...)
-	runCmd.Stdout = &stdout
-	runCmd.Stderr = &stderr
-	if err := runCmd.Run(); err != nil {
-		return "", fmt.Errorf("docker run failed: %v\n%s", err, stderr.String())
-	}
-	return stdout.String(), nil
+	return fmt.Sprintf("import sys\nif len(sys.argv) == 1:\n    sys.argv = [__file__] + %s\n\n", string(b)), nil
 }
 
-// RunSpecialistTask runs the specialist agent for a single task, executing
-// selected scripts via Docker, and returns raw script outputs.
-func RunSpecialistTask(s Specialist, task string, openaiService *openai.OpenAIService, ctx context.Context, emit func(string)) (string, error) {
-	agent := CallSpecialist(s)
+func withInjectedArgs(source string, args []string) (string, error) {
+	injector, err := buildScriptArgInjector(args)
+	if err != nil {
+		return "", err
+	}
+	if injector == "" {
+		return source, nil
+	}
 
-	specialistDirName := strings.ToLower(strings.ReplaceAll(s.Name, " ", "-"))
-	specialistDir := fmt.Sprintf("../specialists/%s", specialistDirName)
+	if strings.HasPrefix(source, "#!") {
+		if i := strings.IndexByte(source, '\n'); i >= 0 {
+			return source[:i+1] + injector + source[i+1:], nil
+		}
+		return source + "\n" + injector, nil
+	}
+
+	return injector + source, nil
+}
+
+func specialistDirName(name string) string {
+	return strings.ToLower(strings.ReplaceAll(name, " ", "-"))
+}
+
+// SelectSpecialistScripts asks the specialist model which scripts should run for this task.
+func SelectSpecialistScripts(s Specialist, task string, openaiService *openai.OpenAIService, ctx context.Context, emit func(string)) (SpecialistScriptPlan, error) {
+	agent := CallSpecialist(s)
 
 	message := fmt.Sprintf("{\"task\":\"%s\"}", task)
 	raw, err := agent.Chat(message, openaiService, ctx)
 	if err != nil {
-		return "", fmt.Errorf("specialist %s error: %w", s.Name, err)
+		return SpecialistScriptPlan{}, fmt.Errorf("specialist %s error: %w", s.Name, err)
 	}
 	if emit != nil {
 		emit(fmt.Sprintf("#### %s response\n```json\n%s\n```\n\n", s.Name, strings.TrimSpace(raw)))
@@ -160,15 +161,15 @@ func RunSpecialistTask(s Specialist, task string, openaiService *openai.OpenAISe
 
 	plan, err := parseScriptPlan(raw)
 	if err != nil {
-		return "", fmt.Errorf("specialist %s returned invalid script plan", s.Name)
+		return SpecialistScriptPlan{}, fmt.Errorf("specialist %s returned invalid script plan", s.Name)
 	}
 
-	allowed := make(map[string]struct{}, len(s.Plugins))
+	allowed := make(map[string]string, len(s.Plugins))
 	for _, p := range s.Plugins {
-		allowed[normalizeScriptName(p.Path)] = struct{}{}
+		allowed[normalizeScriptName(p.Path)] = p.Path
 	}
 	if len(allowed) == 0 {
-		return "", fmt.Errorf("specialist %s has no configured scripts", s.Name)
+		return SpecialistScriptPlan{}, fmt.Errorf("specialist %s has no configured scripts", s.Name)
 	}
 
 	if len(plan.Scripts) == 0 {
@@ -204,52 +205,87 @@ func RunSpecialistTask(s Specialist, task string, openaiService *openai.OpenAISe
 		emit("\n")
 	}
 
-	results := make([]ScriptExecutionResult, 0, len(plan.Scripts))
+	validated := make([]string, 0, len(plan.Scripts))
 	for _, call := range plan.Scripts {
-		call = strings.TrimSpace(call)
-		if call == "" {
+		fields := strings.Fields(strings.TrimSpace(call))
+		if len(fields) == 0 {
 			continue
 		}
-		first := strings.Fields(call)
-		if len(first) == 0 {
-			continue
-		}
-		scriptName := normalizeScriptName(first[0])
+		scriptName := normalizeScriptName(fields[0])
 		if _, ok := allowed[scriptName]; !ok {
-			errMsg := fmt.Sprintf("script %q is not allowed for specialist %q", scriptName, s.Name)
 			if emit != nil {
 				emit(fmt.Sprintf("Script rejected: `%s`\n\n", call))
 			}
-			results = append(results, ScriptExecutionResult{Script: call, Error: errMsg})
+			continue
+		}
+		validated = append(validated, call)
+	}
+
+	if len(validated) == 0 {
+		return SpecialistScriptPlan{}, fmt.Errorf("specialist %s selected no valid scripts", s.Name)
+	}
+	plan.Scripts = validated
+	return plan, nil
+}
+
+// StageSpecialistScripts copies selected specialist scripts into sharedDir so sandbox can run them.
+func StageSpecialistScripts(s Specialist, plan SpecialistScriptPlan, sharedDir string, emit func(string)) ([]StagedScript, error) {
+	if err := os.MkdirAll(sharedDir, 0o755); err != nil {
+		return nil, fmt.Errorf("create shared scripts dir: %w", err)
+	}
+
+	batchID := time.Now().UnixNano()
+
+	pluginPaths := make(map[string]string, len(s.Plugins))
+	for _, p := range s.Plugins {
+		pluginPaths[normalizeScriptName(p.Path)] = p.Path
+	}
+
+	specialistDir := filepath.Join(specialistsDir, specialistDirName(s.Name))
+	staged := make([]StagedScript, 0, len(plan.Scripts))
+
+	for i, call := range plan.Scripts {
+		fields := strings.Fields(strings.TrimSpace(call))
+		if len(fields) == 0 {
 			continue
 		}
 
+		scriptName := normalizeScriptName(fields[0])
+		relPath, ok := pluginPaths[scriptName]
+		if !ok {
+			return nil, fmt.Errorf("script %q is not configured for specialist %q", scriptName, s.Name)
+		}
+
+		sourcePath := filepath.Join(specialistDir, relPath)
+		source, err := os.ReadFile(sourcePath)
+		if err != nil {
+			return nil, fmt.Errorf("read source script %s: %w", sourcePath, err)
+		}
+
+		content, err := withInjectedArgs(string(source), fields[1:])
+		if err != nil {
+			return nil, fmt.Errorf("prepare script %q: %w", call, err)
+		}
+
+		stagedFile := fmt.Sprintf("%s-%s-%d-%d.py", specialistDirName(s.Name), scriptName, batchID, i+1)
+		destPath := filepath.Join(sharedDir, stagedFile)
+		if err := os.WriteFile(destPath, []byte(content), 0o644); err != nil {
+			return nil, fmt.Errorf("write staged script %s: %w", destPath, err)
+		}
+
+		staged = append(staged, StagedScript{
+			ScriptCall: call,
+			StagedFile: stagedFile,
+		})
+
 		if emit != nil {
-			emit(fmt.Sprintf("Running `%s`\n\n", call))
+			emit(fmt.Sprintf("Staged `%s` as `%s`\n\n", call, stagedFile))
 		}
-		output, scriptErr := runDockerScript(specialistDir, call)
-		if scriptErr != nil {
-			if emit != nil {
-				emit(fmt.Sprintf("Script error for `%s`\n```text\n%s\n```\n\n", call, scriptErr.Error()))
-			}
-			results = append(results, ScriptExecutionResult{Script: call, Error: scriptErr.Error()})
-			continue
-		}
-		if emit != nil {
-			emit(fmt.Sprintf("Output for `%s`\n```json\n%s\n```\n\n", call, strings.TrimSpace(output)))
-		}
-		results = append(results, ScriptExecutionResult{Script: call, Output: output})
 	}
 
-	env := SpecialistExecutionEnvelope{
-		Specialist: s.Name,
-		Task:       task,
-		Results:    results,
-	}
-	encoded, err := json.Marshal(env)
-	if err != nil {
-		return "", fmt.Errorf("failed to encode specialist execution output: %w", err)
+	if len(staged) == 0 {
+		return nil, fmt.Errorf("no scripts staged for specialist %q", s.Name)
 	}
 
-	return string(encoded), nil
+	return staged, nil
 }

@@ -12,6 +12,8 @@ import (
 	"time"
 )
 
+const defaultSharedScriptsDir = "../shared-scripts"
+
 type VMMessage struct {
 	Type     string `json:"type"`
 	Msg      string `json:"msg,omitempty"`
@@ -21,9 +23,16 @@ type VMMessage struct {
 	Output   string `json:"output,omitempty"`
 }
 
+func SharedScriptsDir() string {
+	if dir := strings.TrimSpace(os.Getenv("SANDBOX_SHARED_SCRIPTS_DIR")); dir != "" {
+		return dir
+	}
+	return defaultSharedScriptsDir
+}
+
 func RunSandbox(ctx context.Context) (results []VMMessage, retErr error) {
 	defer func() {
-		if err := clearSharedScriptsDir(); err != nil {
+		if err := ClearSharedScriptsDir(); err != nil {
 			if retErr != nil {
 				retErr = fmt.Errorf("%v; cleanup failed: %w", retErr, err)
 			} else {
@@ -43,9 +52,12 @@ func RunSandbox(ctx context.Context) (results []VMMessage, retErr error) {
 		"-m", "1024",
 		"-smp", "2",
 		"-drive", "file=../data/sandbox.qcow2,if=virtio",
+		"-snapshot",
 		"-bios", "/opt/homebrew/share/qemu/edk2-aarch64-code.fd",
-		"-fsdev", "local,id=fsdev0,path=../specialists/shared-scripts,security_model=none,readonly=on",
+		"-fsdev", "local,id=fsdev0,path=../shared-scripts,security_model=none,readonly=on",
 		"-device", "virtio-9p-pci,fsdev=fsdev0,mount_tag=share",
+		"-netdev", "user,id=net0",
+		"-device", "virtio-net-device,netdev=net0",
 		"-nographic",
 	)
 
@@ -64,11 +76,8 @@ func RunSandbox(ctx context.Context) (results []VMMessage, retErr error) {
 	}
 
 	lines := make(chan string, 128)
-
 	go scanLines(stdout, lines)
 	go scanLines(stderr, lines)
-
-	var bootDone bool
 
 	done := make(chan error, 1)
 	go func() {
@@ -91,8 +100,6 @@ func RunSandbox(ctx context.Context) (results []VMMessage, retErr error) {
 			if line == "" {
 				continue
 			}
-
-			// Ignore the noisy firmware/kernel boot output until we hit JSON
 			if !strings.HasPrefix(line, "{") {
 				continue
 			}
@@ -102,26 +109,21 @@ func RunSandbox(ctx context.Context) (results []VMMessage, retErr error) {
 				continue
 			}
 
-			bootDone = true
-
 			switch msg.Type {
-			case "vm_status":
-				if msg.Msg == "powering off" {
-					// Keep waiting for process exit
-				}
 			case "result":
 				results = append(results, msg)
 			case "vm_error":
 				return nil, fmt.Errorf("vm error: %s", msg.Msg)
 			}
-
-			_ = bootDone
 		}
 	}
 }
 
-func clearSharedScriptsDir() error {
-	const sharedScriptsDir = "../specialists/shared-scripts"
+func ClearSharedScriptsDir() error {
+	sharedScriptsDir := SharedScriptsDir()
+	if err := os.MkdirAll(sharedScriptsDir, 0o755); err != nil {
+		return fmt.Errorf("create shared scripts dir: %w", err)
+	}
 
 	entries, err := os.ReadDir(sharedScriptsDir)
 	if err != nil {
@@ -149,11 +151,8 @@ func clearSharedScriptsDir() error {
 
 func scanLines(pipe interface{ Read([]byte) (int, error) }, out chan<- string) {
 	scanner := bufio.NewScanner(pipe)
-
-	// Increase max line size in case script output gets larger
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, 1024*1024)
-
 	for scanner.Scan() {
 		out <- scanner.Text()
 	}

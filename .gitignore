@@ -3,4 +3,4 @@
 data/
 
 
-backend/specialists/shared-scripts/*.py
+backend/shared-scripts/*.py

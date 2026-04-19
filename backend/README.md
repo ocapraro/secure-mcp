@@ -46,6 +46,10 @@ exec > /dev/ttyAMA0 2>&1
 ulimit -t 5
 ulimit -v 262144
 
+ip link set eth0 up || true
+dhcpcd eth0 || true
+sleep 1
+
 SCRIPT_DIR="/mnt/scripts"
 
 echo '{"type":"vm_status","msg":"runner started"}'

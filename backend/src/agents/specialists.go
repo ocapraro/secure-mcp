@@ -51,6 +51,9 @@ func ListSpecialists() []Specialist {
 		bioPath := filepath.Join(specialistsDir, entry.Name(), "bio.xml")
 		data, err := os.ReadFile(bioPath)
 		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
 			log.Printf("warning: skipping %s: %v", bioPath, err)
 			continue
 		}

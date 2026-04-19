@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"smcp/agents"
 	"smcp/database"
 	"smcp/openai"
+	"smcp/sandbox"
 	"smcp/types"
 	"strconv"
 	"strings"
@@ -104,6 +106,10 @@ func markdownList(items []string) string {
 }
 
 func runDelegatedTasks(initialMessage string, specialistMap map[string]agents.Specialist, openaiService *openai.OpenAIService, chatModel string, ctx *http.Request, emit func(string)) ([]taskResult, error) {
+	if err := sandbox.ClearSharedScriptsDir(); err != nil {
+		return nil, fmt.Errorf("failed to prepare shared scripts dir: %w", err)
+	}
+
 	if emit != nil {
 		emit("## Planning\n")
 		emit(fmt.Sprintf("Original request: %s\n\n", initialMessage))
@@ -144,6 +150,14 @@ func runDelegatedTasks(initialMessage string, specialistMap map[string]agents.Sp
 	}
 
 	results := make([]taskResult, 0, len(delegated.Assignments))
+	type pendingSpecialistTask struct {
+		ResultIndex int
+		Specialist  agents.Specialist
+		Task        string
+		Staged      []agents.StagedScript
+	}
+	pending := make([]pendingSpecialistTask, 0)
+
 	for index, assignment := range delegated.Assignments {
 		tr := taskResult{Task: assignment.Task, Assignee: assignment.Assignee}
 		assigneeLower := strings.ToLower(assignment.Assignee)
@@ -171,14 +185,27 @@ func runDelegatedTasks(initialMessage string, specialistMap map[string]agents.Sp
 				}
 			}
 		} else if s, ok := specialistMap[assigneeLower]; ok {
-			answer, err := agents.RunSpecialistTask(s, assignment.Task, openaiService, ctx.Context(), emit)
+			plan, err := agents.SelectSpecialistScripts(s, assignment.Task, openaiService, ctx.Context(), emit)
 			if err != nil {
 				tr.Error = err.Error()
 				if emit != nil {
 					emit(fmt.Sprintf("Specialist error: %s\n\n", tr.Error))
 				}
 			} else {
-				tr.Answer = answer
+				staged, stageErr := agents.StageSpecialistScripts(s, plan, sandbox.SharedScriptsDir(), emit)
+				if stageErr != nil {
+					tr.Error = stageErr.Error()
+					if emit != nil {
+						emit(fmt.Sprintf("Staging error: %s\n\n", tr.Error))
+					}
+				} else {
+					pending = append(pending, pendingSpecialistTask{
+						ResultIndex: len(results),
+						Specialist:  s,
+						Task:        assignment.Task,
+						Staged:      staged,
+					})
+				}
 			}
 		} else {
 			answer, err := openaiService.SendChatPatiently(ctx.Context(), openai.OllamaChatRequest{
@@ -202,6 +229,80 @@ func runDelegatedTasks(initialMessage string, specialistMap map[string]agents.Sp
 		}
 
 		results = append(results, tr)
+	}
+
+	if len(pending) == 0 {
+		return results, nil
+	}
+
+	if emit != nil {
+		emit("### Sandbox\n")
+		emit(fmt.Sprintf("Running sandbox for %d staged specialist script(s)...\n\n", len(pending)))
+	}
+
+	vmResults, err := sandbox.RunSandbox(ctx.Context())
+	if err != nil {
+		if emit != nil {
+			emit(fmt.Sprintf("Sandbox error: `%v`\n\n", err))
+		}
+		for _, p := range pending {
+			results[p.ResultIndex].Error = fmt.Sprintf("sandbox run failed: %v", err)
+		}
+		return results, nil
+	}
+
+	if emit != nil {
+		emit(fmt.Sprintf("Sandbox returned %d VM message(s).\n\n", len(vmResults)))
+	}
+
+	resultByScript := make(map[string]sandbox.VMMessage, len(vmResults))
+	for _, vm := range vmResults {
+		if vm.Type != "result" {
+			continue
+		}
+		if vm.Script == "" {
+			continue
+		}
+		resultByScript[filepath.Base(vm.Script)] = vm
+	}
+
+	if emit != nil {
+		emit(fmt.Sprintf("Sandbox reported %d script result(s).\n\n", len(resultByScript)))
+	}
+
+	for _, p := range pending {
+		env := agents.SpecialistExecutionEnvelope{
+			Specialist: p.Specialist.Name,
+			Task:       p.Task,
+			Results:    make([]agents.ScriptExecutionResult, 0, len(p.Staged)),
+		}
+
+		for _, staged := range p.Staged {
+			entry := agents.ScriptExecutionResult{Script: staged.ScriptCall}
+			if vm, ok := resultByScript[staged.StagedFile]; ok {
+				if vm.OK {
+					entry.Output = vm.Output
+				} else {
+					entry.Error = fmt.Sprintf("exit code %d: %s", vm.ExitCode, vm.Output)
+					if emit != nil {
+						emit(fmt.Sprintf("Sandbox script failed `%s`: `%s`\n\n", staged.StagedFile, entry.Error))
+					}
+				}
+			} else {
+				entry.Error = "no sandbox result returned for staged script"
+				if emit != nil {
+					emit(fmt.Sprintf("Sandbox missing result for staged script `%s`.\n\n", staged.StagedFile))
+				}
+			}
+			env.Results = append(env.Results, entry)
+		}
+
+		encoded, marshalErr := json.Marshal(env)
+		if marshalErr != nil {
+			results[p.ResultIndex].Error = fmt.Sprintf("failed to encode specialist result: %v", marshalErr)
+			continue
+		}
+		results[p.ResultIndex].Answer = string(encoded)
 	}
 
 	return results, nil
