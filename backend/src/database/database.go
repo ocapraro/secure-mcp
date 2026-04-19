@@ -150,3 +150,50 @@ func (s *DatabaseService) GetSessionByID(id int64) (Session, error) {
 
 	return session, nil
 }
+
+func (s *DatabaseService) UpdateSessionByID(id int64, update UpdateSession) (Session, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return Session{}, err
+	}
+	defer tx.Rollback()
+
+	result, err := tx.Exec(`
+		UPDATE sessions
+		SET model = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, update.Model, id)
+	if err != nil {
+		return Session{}, err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return Session{}, err
+	}
+	if rowsAffected == 0 {
+		return Session{}, sql.ErrNoRows
+	}
+
+	if _, err := tx.Exec(`
+		DELETE FROM messages
+		WHERE session_id = ?
+	`, id); err != nil {
+		return Session{}, err
+	}
+
+	for _, msg := range update.Messages {
+		if _, err := tx.Exec(`
+			INSERT INTO messages (role, content, session_id)
+			VALUES (?, ?, ?)
+		`, msg.Role, msg.Content, id); err != nil {
+			return Session{}, err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return Session{}, err
+	}
+
+	return s.GetSessionByID(id)
+}

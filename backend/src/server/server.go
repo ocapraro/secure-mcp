@@ -1,6 +1,7 @@
 package server
 
 import (
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -88,7 +89,40 @@ func InitServer(mux *http.ServeMux, dbService *database.DatabaseService) {
 
 		session, err := dbService.GetSessionByID(id)
 		if err != nil {
-			http.Error(w, "session not found", http.StatusNotFound)
+			if err == sql.ErrNoRows {
+				http.Error(w, "session not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, "failed to fetch session", http.StatusBadGateway)
+			return
+		}
+
+		_ = json.NewEncoder(w).Encode(session)
+	})
+
+	mux.HandleFunc("PATCH /api/sessions/{id}", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		idParam := r.PathValue("id")
+		id, err := strconv.ParseInt(idParam, 10, 64)
+		if err != nil {
+			http.Error(w, "invalid session id", http.StatusBadRequest)
+			return
+		}
+
+		var update database.UpdateSession
+		if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
+			http.Error(w, "invalid json", http.StatusBadRequest)
+			return
+		}
+
+		session, err := dbService.UpdateSessionByID(id, update)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				http.Error(w, "session not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, "failed to update session", http.StatusBadGateway)
 			return
 		}
 

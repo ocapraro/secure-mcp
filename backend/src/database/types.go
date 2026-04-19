@@ -7,6 +7,11 @@ type CreateSession struct {
 	Model string `json:"model"`
 }
 
+type UpdateSession struct {
+	Model    string    `json:"model"`
+	Messages []Message `json:"messages"`
+}
+
 type PartialSession struct {
 	CreateSession
 	ID        int64     `json:"id"`
