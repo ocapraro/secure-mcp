@@ -186,7 +186,10 @@ func InitServer(mux *http.ServeMux, dbService *database.DatabaseService) {
 				if readErr == io.EOF {
 					return
 				}
-				http.Error(w, "stream read failed", http.StatusBadGateway)
+				// Headers/body may have already started; avoid calling http.Error after WriteHeader.
+				if flusher != nil {
+					flusher.Flush()
+				}
 				return
 			}
 		}

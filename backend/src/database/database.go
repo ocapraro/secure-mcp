@@ -12,10 +12,16 @@ type DatabaseService struct {
 }
 
 func NewDatabaseService(path string) (*DatabaseService, error) {
-	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=foreign_keys(1)")
+	// Enable WAL + busy timeout to reduce writer contention under concurrent PATCH calls.
+	dsn := "file:" + path + "?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return &DatabaseService{}, err
 	}
+
+	// Keep a small connection pool; SQLite still has a single writer but benefits from pooled readers.
+	db.SetMaxOpenConns(10)
+	db.SetMaxIdleConns(5)
 
 	if err := db.Ping(); err != nil {
 		return &DatabaseService{}, err
