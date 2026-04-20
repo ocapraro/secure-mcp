@@ -69,7 +69,7 @@ func CallSpecialist(s Specialist) *Agent {
 	pluginSection := "You have no plugins available."
 	if pluginDocs.Len() > 0 {
 		pluginSection = fmt.Sprintf(
-			"You have the following plugins available. Your job is ONLY to choose which scripts should run for the task. Do not answer the task yourself. Respond with JSON in this exact shape: {\"reasoning\":string,\"scripts\":string[]}, where each scripts item is a script name (without path) followed by args, e.g. \"get-weather Boston\". If plugins are available, scripts must contain at least one entry. Runtime secrets are injected by the orchestrator; never include or request secret values in script args.%s",
+			"You have the following plugins available. Your job is ONLY to choose which scripts should run for the task. Do not answer the task yourself. Respond with JSON in this exact shape: {\"reasoning\":string,\"scripts\":string[]}, where each scripts item is a script name (without path) followed by args, e.g. \"get-weather city=Boston\". If plugins are available, scripts must contain at least one entry. Runtime secrets are injected by the orchestrator; never include or request secret values in script args. Do NOT emit placeholders like <date>, <time>, <value>; provide concrete argument values only. Follow each plugin usage strictly and keep argument order unless you use named form (--arg value or arg=value).%s",
 			pluginDocs.String(),
 		)
 	}
@@ -175,7 +175,8 @@ func extractFirstJSONObject(raw string) (string, bool) {
 	return "", false
 }
 
-var tokenLiteralPattern = regexp.MustCompile(`"__TOKEN_([A-Za-z_][A-Za-z0-9_]*)(?::(string|int|float|bool))?__"`)
+var tokenQuotedPattern = regexp.MustCompile(`"__TOKEN_([A-Za-z_][A-Za-z0-9_]*)(?::(string|int|float|bool))?__"`)
+var tokenBarePattern = regexp.MustCompile(`__TOKEN_([A-Za-z_][A-Za-z0-9_]*)(?::(string|int|float|bool))?__`)
 
 func splitScriptCall(raw string) ([]string, error) {
 	raw = strings.TrimSpace(raw)
@@ -310,19 +311,72 @@ func mapScriptArgs(plugin Plugin, rawArgs []string) (map[string]string, error) {
 		return values, nil
 	}
 
+	named := make(map[string]string)
+	positionals := make([]string, 0, len(rawArgs))
+	defByName := make(map[string]bool, len(defs))
+	for _, def := range defs {
+		defByName[strings.TrimSpace(def.Name)] = true
+	}
+
+	for i := 0; i < len(rawArgs); i++ {
+		a := strings.TrimSpace(rawArgs[i])
+		if a == "" {
+			continue
+		}
+
+		if strings.HasPrefix(a, "--") {
+			name := strings.TrimSpace(strings.TrimPrefix(a, "--"))
+			if name == "" {
+				continue
+			}
+			if strings.Contains(name, "=") {
+				parts := strings.SplitN(name, "=", 2)
+				k := strings.TrimSpace(parts[0])
+				v := strings.TrimSpace(parts[1])
+				if defByName[k] {
+					named[k] = v
+					continue
+				}
+			}
+			if defByName[name] && i+1 < len(rawArgs) {
+				named[name] = strings.TrimSpace(rawArgs[i+1])
+				i++
+				continue
+			}
+		}
+
+		if strings.Contains(a, "=") {
+			parts := strings.SplitN(a, "=", 2)
+			k := strings.TrimSpace(parts[0])
+			v := strings.TrimSpace(parts[1])
+			if defByName[k] {
+				named[k] = v
+				continue
+			}
+		}
+
+		positionals = append(positionals, a)
+	}
+
+	posIdx := 0
+
 	for i, def := range defs {
 		name := strings.TrimSpace(def.Name)
 		if name == "" {
 			return nil, fmt.Errorf("plugin argument with empty name")
 		}
 
-		var v string
-		if i == len(defs)-1 {
-			if len(rawArgs) > i {
-				v = strings.Join(rawArgs[i:], " ")
+		v, hasNamed := named[name]
+		if !hasNamed {
+			if i == len(defs)-1 {
+				if posIdx < len(positionals) {
+					v = strings.Join(positionals[posIdx:], " ")
+					posIdx = len(positionals)
+				}
+			} else if posIdx < len(positionals) {
+				v = positionals[posIdx]
+				posIdx++
 			}
-		} else if len(rawArgs) > i {
-			v = rawArgs[i]
 		}
 
 		v = strings.TrimSpace(v)
@@ -386,40 +440,47 @@ func optionalDefaultLiteral(argType string) string {
 	}
 }
 
-func replaceTokensWithSanitizedLiterals(source string, argValues map[string]string, secretValues map[string]string, tokenRequired map[string]bool) (string, error) {
+func resolveTokenLiteral(name string, argType string, argValues map[string]string, secretValues map[string]string, tokenRequired map[string]bool) (string, error) {
+	raw, ok := argValues[name]
+	if !ok {
+		raw, ok = secretValues[name]
+	}
+	if !ok {
+		raw, ok = secretValues[strings.ToLower(name)]
+	}
+	if !ok {
+		req, known := tokenRequired[name]
+		if known && !req {
+			return optionalDefaultLiteral(argType), nil
+		}
+		return "", fmt.Errorf("missing value for token %q", name)
+	}
+
+	lit, err := sanitizeTypedArg(name, raw, argType)
+	if err != nil {
+		return "", fmt.Errorf("invalid value for %q: %w", name, err)
+	}
+	return lit, nil
+}
+
+func applyTokenRegex(source string, pattern *regexp.Regexp, argValues map[string]string, secretValues map[string]string, tokenRequired map[string]bool) (string, error) {
 	var replaceErr error
 
-	replaced := tokenLiteralPattern.ReplaceAllStringFunc(source, func(m string) string {
+	replaced := pattern.ReplaceAllStringFunc(source, func(m string) string {
 		if replaceErr != nil {
 			return m
 		}
-		parts := tokenLiteralPattern.FindStringSubmatch(m)
+		parts := pattern.FindStringSubmatch(m)
 		if len(parts) < 3 {
 			replaceErr = fmt.Errorf("invalid token format %q", m)
 			return m
 		}
+
 		name := parts[1]
 		argType := parts[2]
-
-		raw, ok := argValues[name]
-		if !ok {
-			raw, ok = secretValues[name]
-		}
-		if !ok {
-			raw, ok = secretValues[strings.ToLower(name)]
-		}
-		if !ok {
-			req, known := tokenRequired[name]
-			if known && !req {
-				return optionalDefaultLiteral(argType)
-			}
-			replaceErr = fmt.Errorf("missing value for token %q", name)
-			return m
-		}
-
-		lit, err := sanitizeTypedArg(name, raw, argType)
+		lit, err := resolveTokenLiteral(name, argType, argValues, secretValues, tokenRequired)
 		if err != nil {
-			replaceErr = fmt.Errorf("invalid value for %q: %w", name, err)
+			replaceErr = err
 			return m
 		}
 		return lit
@@ -428,8 +489,21 @@ func replaceTokensWithSanitizedLiterals(source string, argValues map[string]stri
 	if replaceErr != nil {
 		return "", replaceErr
 	}
+	return replaced, nil
+}
 
-	if tokenLiteralPattern.MatchString(replaced) {
+func replaceTokensWithSanitizedLiterals(source string, argValues map[string]string, secretValues map[string]string, tokenRequired map[string]bool) (string, error) {
+	replaced, err := applyTokenRegex(source, tokenQuotedPattern, argValues, secretValues, tokenRequired)
+	if err != nil {
+		return "", err
+	}
+
+	replaced, err = applyTokenRegex(replaced, tokenBarePattern, argValues, secretValues, tokenRequired)
+	if err != nil {
+		return "", err
+	}
+
+	if tokenQuotedPattern.MatchString(replaced) || tokenBarePattern.MatchString(replaced) {
 		return "", fmt.Errorf("unresolved token remains after conversion")
 	}
 
@@ -479,6 +553,10 @@ func SelectSpecialistScripts(s Specialist, task string, openaiService *openai.Op
 	}
 
 	validated := make([]string, 0, len(plan.Scripts))
+	pluginByName := make(map[string]Plugin, len(s.Plugins))
+	for _, p := range s.Plugins {
+		pluginByName[normalizeScriptName(p.Path)] = p
+	}
 	for _, call := range plan.Scripts {
 		fields, splitErr := splitScriptCall(call)
 		if splitErr != nil {
@@ -488,9 +566,17 @@ func SelectSpecialistScripts(s Specialist, task string, openaiService *openai.Op
 			continue
 		}
 		scriptName := normalizeScriptName(fields[0])
-		if _, ok := allowed[scriptName]; !ok {
+		plugin, ok := pluginByName[scriptName]
+		if !ok {
 			if emit != nil {
 				emit(fmt.Sprintf("Script rejected: `%s`\n\n", call))
+			}
+			continue
+		}
+
+		if _, argErr := mapScriptArgs(plugin, fields[1:]); argErr != nil {
+			if emit != nil {
+				emit(fmt.Sprintf("Script rejected: `%s` (%s)\n\n", call, argErr.Error()))
 			}
 			continue
 		}

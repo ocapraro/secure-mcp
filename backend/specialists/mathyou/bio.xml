@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<specialist>
+  <name>Mathyou</name>
+  <version>1.1.0</version>
+  <resume>Hi, I'm Mathyou. I handle everyday math and practical comparisons like date differences and distance comparisons with unit conversions.</resume>
+  <exampleRequest>Compare two dates and tell me which is later, then compare 5 miles vs 8 kilometers.</exampleRequest>
+  <plugins>
+    <script>
+      <path>scripts/calculate-expression.py</path>
+      <description>Safely evaluates a math expression with basic arithmetic operators.</description>
+      <usage>python scripts/calculate-expression.py &lt;expression&gt;</usage>
+      <arguments>
+        <argument name="expression" required="true">Math expression using numbers, parentheses, and operators: +, -, *, /, //, %, ** (example: (3 + 5) * 2.5).</argument>
+      </arguments>
+      <output>JSON object with fields: expression, result.</output>
+      <example>python scripts/calculate-expression.py "(3 + 5) * 2.5"</example>
+    </script>
+    <script>
+      <path>scripts/compare-dates.py</path>
+      <description>Compares two ISO dates/datetimes and returns which is earlier or later plus the difference.</description>
+      <usage>python scripts/compare-dates.py &lt;date_a&gt; &lt;date_b&gt;</usage>
+      <arguments>
+        <argument name="date_a" required="true">First ISO date/datetime (e.g., 2026-04-20 or 2026-04-20T14:30:00).</argument>
+        <argument name="date_b" required="true">Second ISO date/datetime (e.g., 2026-04-21 or 2026-04-21T09:00:00).</argument>
+      </arguments>
+      <output>JSON object with fields: date_a, date_b, relation, difference_days, difference_hours, difference_seconds.</output>
+      <example>python scripts/compare-dates.py 2026-04-20 2026-04-21</example>
+    </script>
+    <script>
+      <path>scripts/add-days-to-date.py</path>
+      <description>Adds or subtracts whole days from an ISO date/datetime.</description>
+      <usage>python scripts/add-days-to-date.py &lt;date_input&gt; &lt;days&gt;</usage>
+      <arguments>
+        <argument name="date_input" required="true">ISO date/datetime (e.g., 2026-04-20 or 2026-04-20T14:30:00).</argument>
+        <argument name="days" required="true">Integer number of days to add (negative to subtract).</argument>
+      </arguments>
+      <output>JSON object with fields: input_date, days_added, result_iso, result_date.</output>
+      <example>python scripts/add-days-to-date.py 2026-04-20 5</example>
+    </script>
+    <script>
+      <path>scripts/add-time-offset.py</path>
+      <description>Adds mixed offsets (days, hours, minutes) to an ISO datetime.</description>
+      <usage>python scripts/add-time-offset.py &lt;datetime_input&gt; &lt;days&gt; &lt;hours&gt; &lt;minutes&gt;</usage>
+      <arguments>
+        <argument name="datetime_input" required="true">ISO date/datetime (e.g., 2026-04-20T14:30:00).</argument>
+        <argument name="days" required="true">Integer days offset (negative allowed).</argument>
+        <argument name="hours" required="true">Integer hours offset (negative allowed).</argument>
+        <argument name="minutes" required="true">Integer minutes offset (negative allowed).</argument>
+      </arguments>
+      <output>JSON object with fields: input_datetime, offset{days,hours,minutes}, result_iso, result_date, result_time.</output>
+      <example>python scripts/add-time-offset.py 2026-04-20T14:30:00 0 2 15</example>
+    </script>
+    <script>
+      <path>scripts/compare-distances.py</path>
+      <description>Compares two distances, normalizes units to meters, and reports which is larger.</description>
+      <usage>python scripts/compare-distances.py &lt;value_a&gt; &lt;unit_a&gt; &lt;value_b&gt; &lt;unit_b&gt;</usage>
+      <arguments>
+        <argument name="value_a" required="true">Numeric distance value for A.</argument>
+        <argument name="unit_a" required="true">Unit for A: mm, cm, m, km, in, ft, yd, mi.</argument>
+        <argument name="value_b" required="true">Numeric distance value for B.</argument>
+        <argument name="unit_b" required="true">Unit for B: mm, cm, m, km, in, ft, yd, mi.</argument>
+      </arguments>
+      <output>JSON object with fields: a_meters, b_meters, relation, difference_meters, larger, smaller.</output>
+      <example>python scripts/compare-distances.py 5 mi 8 km</example>
+    </script>
+  </plugins>
+</specialist>
