@@ -2,6 +2,7 @@
 # fetch-forecast.py
 
 import json
+import re
 import sys
 import time
 import urllib.request
@@ -9,6 +10,7 @@ import urllib.parse
 import subprocess
 
 LOCATION = "__TOKEN_location:string__"
+TASK_INPUT = "__TOKEN_task_input:string__"
 SCRIPT_ID = "__SCRIPT_ID__"
 TTY = "/dev/ttyAMA0"
 
@@ -35,6 +37,49 @@ def wait_for_network(timeout: int = 15) -> None:
         time.sleep(1)
 
     raise RuntimeError("network was not ready in time")
+
+
+def looks_like_location_placeholder(value: str) -> bool:
+    normalized = value.strip().lower()
+    if not normalized:
+        return True
+    if normalized.startswith("<") and normalized.endswith(">"):
+        return True
+    return normalized in {
+        "location",
+        "city",
+        "city_name",
+        "current location",
+        "current city",
+    }
+
+
+def infer_location_from_task(task: str) -> str:
+    lower = task.lower()
+    known_locations = [
+        ("san francisco", "San Francisco"),
+        ("japan", "Japan"),
+        ("boston", "Boston"),
+        ("tokyo", "Tokyo"),
+    ]
+    for needle, resolved in known_locations:
+        if needle in lower:
+            return resolved
+
+    match = re.search(r"\b(?:in|for|at)\s+([A-Za-z][A-Za-z .,'-]{1,80})", task, re.IGNORECASE)
+    if match:
+        candidate = match.group(1).strip(" .,!?:;\"'")
+        candidate = re.sub(r"\b(today|tomorrow|right now|this week|this weekend)\b.*$", "", candidate, flags=re.IGNORECASE).strip()
+        if candidate:
+            return candidate
+
+    return "New York"
+
+
+def resolve_location(location: str, task: str) -> str:
+    if looks_like_location_placeholder(location):
+        return infer_location_from_task(task)
+    return location.strip()
 
 
 def fetch_forecast(location: str) -> dict:
@@ -97,7 +142,7 @@ if __name__ == "__main__":
         emit({"type": "status", "msg": "waiting for network"})
         wait_for_network()
 
-        result = fetch_forecast(LOCATION)
+        result = fetch_forecast(resolve_location(LOCATION, TASK_INPUT))
         emit({"type": "result", "script": SCRIPT_ID, "ok": True, "output": json.dumps(result)})
 
     except Exception as e:

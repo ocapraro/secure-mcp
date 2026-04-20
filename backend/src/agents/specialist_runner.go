@@ -40,9 +40,29 @@ type StagedScript struct {
 func CallSpecialist(s Specialist) *Agent {
 	var pluginDocs strings.Builder
 	for _, p := range s.Plugins {
+		argDocs := "none"
+		if len(p.Arguments) > 0 {
+			argParts := make([]string, 0, len(p.Arguments))
+			for _, a := range p.Arguments {
+				name := strings.TrimSpace(a.Name)
+				if name == "" {
+					continue
+				}
+				required := strings.EqualFold(strings.TrimSpace(a.Required), "true")
+				desc := strings.TrimSpace(a.Value)
+				if desc == "" {
+					desc = "no description provided"
+				}
+				argParts = append(argParts, fmt.Sprintf("%s(required=%t): %s", name, required, desc))
+			}
+			if len(argParts) > 0 {
+				argDocs = strings.Join(argParts, "; ")
+			}
+		}
+
 		pluginDocs.WriteString(fmt.Sprintf(
-			"\n- script: %s\n  description: %s\n  usage: %s\n  example: %s",
-			p.Path, p.Description, p.Usage, p.Example,
+			"\n- script: %s\n  description: %s\n  usage: %s\n  arguments: %s\n  example: %s",
+			p.Path, p.Description, p.Usage, argDocs, p.Example,
 		))
 	}
 
@@ -155,71 +175,15 @@ func extractFirstJSONObject(raw string) (string, bool) {
 	return "", false
 }
 
-func inferLocationFromTask(task string) string {
-	lower := strings.ToLower(task)
-	if strings.Contains(lower, "san francisco") {
-		return "San Francisco"
-	}
-	if strings.Contains(lower, "japan") {
-		return "Japan"
-	}
-	if strings.Contains(lower, "boston") {
-		return "Boston"
-	}
-	if strings.Contains(lower, "tokyo") {
-		return "Tokyo"
-	}
-	return "New York"
-}
-
-func looksLikeLocationPlaceholder(v string) bool {
-	v = strings.TrimSpace(strings.ToLower(v))
-	if v == "" {
-		return true
-	}
-	if strings.HasPrefix(v, "<") && strings.HasSuffix(v, ">") {
-		return true
-	}
-	if v == "location" || v == "city" || v == "city_name" || v == "current location" || v == "current city" {
-		return true
-	}
-	return false
-}
-
-func normalizeArgValue(name, value, task string) string {
-	nameLower := strings.ToLower(strings.TrimSpace(name))
-	v := strings.TrimSpace(value)
-
-	if nameLower != "location" {
-		return v
-	}
-
-	inferred := inferLocationFromTask(task)
-	inferredExplicit := inferred != "" && inferred != "New York"
-
-	if inferredExplicit {
-		if looksLikeLocationPlaceholder(v) || !strings.EqualFold(v, inferred) {
-			return inferred
-		}
-	}
-
-	if looksLikeLocationPlaceholder(v) {
-		return inferred
-	}
-
-	return v
-}
-
-func fallbackScriptCall(allowed map[string]string, task string) string {
-	location := inferLocationFromTask(task)
+func fallbackScriptCall(allowed map[string]string) string {
 	if _, ok := allowed["fetch-forecast"]; ok {
-		return fmt.Sprintf("fetch-forecast %s", location)
+		return "fetch-forecast <location>"
 	}
 	if _, ok := allowed["get-weather"]; ok {
-		return fmt.Sprintf("get-weather %s", location)
+		return "get-weather <location>"
 	}
 	for name := range allowed {
-		return fmt.Sprintf("%s %s", name, location)
+		return name
 	}
 	return ""
 }
@@ -276,7 +240,7 @@ func sanitizeTypedArg(raw string, argType string) (string, error) {
 	}
 }
 
-func mapScriptArgs(plugin Plugin, rawArgs []string, task string) (map[string]string, error) {
+func mapScriptArgs(plugin Plugin, rawArgs []string) (map[string]string, error) {
 	values := make(map[string]string)
 	defs := plugin.Arguments
 
@@ -302,7 +266,7 @@ func mapScriptArgs(plugin Plugin, rawArgs []string, task string) (map[string]str
 			v = rawArgs[i]
 		}
 
-		v = normalizeArgValue(name, v, task)
+		v = strings.TrimSpace(v)
 
 		if strings.TrimSpace(v) == "" {
 			if isRequiredArg(def.Required) {
@@ -402,7 +366,7 @@ func SelectSpecialistScripts(s Specialist, task string, openaiService *openai.Op
 	}
 
 	if len(plan.Scripts) == 0 {
-		fallback := fallbackScriptCall(allowed, task)
+		fallback := fallbackScriptCall(allowed)
 		if fallback != "" {
 			plan.Scripts = []string{fallback}
 			if emit != nil {
@@ -477,10 +441,11 @@ func StageSpecialistScripts(s Specialist, task string, plan SpecialistScriptPlan
 			return nil, fmt.Errorf("read source script %s: %w", sourcePath, err)
 		}
 
-		argValues, err := mapScriptArgs(plugin, fields[1:], task)
+		argValues, err := mapScriptArgs(plugin, fields[1:])
 		if err != nil {
 			return nil, fmt.Errorf("parse args for %q: %w", call, err)
 		}
+		argValues["task_input"] = task
 
 		content, err := replaceTokensWithSanitizedLiterals(string(source), argValues)
 		if err != nil {
