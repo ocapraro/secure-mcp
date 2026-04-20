@@ -195,7 +195,7 @@ func isRequiredArg(required string) bool {
 	return strings.EqualFold(strings.TrimSpace(required), "true")
 }
 
-func sanitizeTypedArg(raw string, argType string) (string, error) {
+func sanitizeTypedArg(tokenName, raw string, argType string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if !utf8.ValidString(raw) {
 		return "", fmt.Errorf("invalid UTF-8")
@@ -205,6 +205,16 @@ func sanitizeTypedArg(raw string, argType string) (string, error) {
 	case "", "string":
 		if raw == "" {
 			return "", fmt.Errorf("must not be empty")
+		}
+		if tokenName == "task_input" {
+			if utf8.RuneCountInString(raw) > 2000 {
+				return "", fmt.Errorf("is too long")
+			}
+			b, err := json.Marshal(raw)
+			if err != nil {
+				return "", err
+			}
+			return string(b), nil
 		}
 		if !safeStringPattern.MatchString(raw) {
 			return "", fmt.Errorf("contains unsupported characters")
@@ -301,7 +311,7 @@ func replaceTokensWithSanitizedLiterals(source string, argValues map[string]stri
 			return m
 		}
 
-		lit, err := sanitizeTypedArg(raw, argType)
+		lit, err := sanitizeTypedArg(name, raw, argType)
 		if err != nil {
 			replaceErr = fmt.Errorf("invalid value for %q: %w", name, err)
 			return m
