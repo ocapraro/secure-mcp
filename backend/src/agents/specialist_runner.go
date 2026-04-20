@@ -69,7 +69,7 @@ func CallSpecialist(s Specialist) *Agent {
 	pluginSection := "You have no plugins available."
 	if pluginDocs.Len() > 0 {
 		pluginSection = fmt.Sprintf(
-			"You have the following plugins available. Your job is ONLY to choose which scripts should run for the task. Do not answer the task yourself. Respond with JSON in this exact shape: {\"reasoning\":string,\"scripts\":string[]}, where each scripts item is a script name (without path) followed by args, e.g. \"get-weather Boston\". If plugins are available, scripts must contain at least one entry.%s",
+			"You have the following plugins available. Your job is ONLY to choose which scripts should run for the task. Do not answer the task yourself. Respond with JSON in this exact shape: {\"reasoning\":string,\"scripts\":string[]}, where each scripts item is a script name (without path) followed by args, e.g. \"get-weather Boston\". If plugins are available, scripts must contain at least one entry. Runtime secrets are injected by the orchestrator; never include or request secret values in script args.%s",
 			pluginDocs.String(),
 		)
 	}
@@ -189,7 +189,72 @@ func fallbackScriptCall(allowed map[string]string) string {
 }
 
 var tokenLiteralPattern = regexp.MustCompile(`"__TOKEN_([A-Za-z_][A-Za-z0-9_]*)(?::(string|int|float|bool))?__"`)
-var safeStringPattern = regexp.MustCompile(`^[\p{L}\p{N} .,'_\-/]{1,200}$`)
+
+func splitScriptCall(raw string) ([]string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, fmt.Errorf("empty script call")
+	}
+
+	parts := make([]string, 0, 8)
+	var cur strings.Builder
+	inQuote := byte(0)
+	escaped := false
+
+	for i := 0; i < len(raw); i++ {
+		c := raw[i]
+
+		if escaped {
+			cur.WriteByte(c)
+			escaped = false
+			continue
+		}
+
+		if c == '\\' {
+			escaped = true
+			continue
+		}
+
+		if inQuote != 0 {
+			if c == inQuote {
+				inQuote = 0
+				continue
+			}
+			cur.WriteByte(c)
+			continue
+		}
+
+		if c == '"' || c == '\'' {
+			inQuote = c
+			continue
+		}
+
+		if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
+			if cur.Len() > 0 {
+				parts = append(parts, cur.String())
+				cur.Reset()
+			}
+			continue
+		}
+
+		cur.WriteByte(c)
+	}
+
+	if escaped {
+		return nil, fmt.Errorf("invalid trailing escape")
+	}
+	if inQuote != 0 {
+		return nil, fmt.Errorf("unterminated quoted string")
+	}
+	if cur.Len() > 0 {
+		parts = append(parts, cur.String())
+	}
+	if len(parts) == 0 {
+		return nil, fmt.Errorf("empty script call")
+	}
+
+	return parts, nil
+}
 
 func isRequiredArg(required string) bool {
 	return strings.EqualFold(strings.TrimSpace(required), "true")
@@ -206,18 +271,15 @@ func sanitizeTypedArg(tokenName, raw string, argType string) (string, error) {
 		if raw == "" {
 			return "", fmt.Errorf("must not be empty")
 		}
+		maxLen := 512
 		if tokenName == "task_input" {
-			if utf8.RuneCountInString(raw) > 2000 {
-				return "", fmt.Errorf("is too long")
-			}
-			b, err := json.Marshal(raw)
-			if err != nil {
-				return "", err
-			}
-			return string(b), nil
+			maxLen = 2000
 		}
-		if !safeStringPattern.MatchString(raw) {
-			return "", fmt.Errorf("contains unsupported characters")
+		if utf8.RuneCountInString(raw) > maxLen {
+			return "", fmt.Errorf("is too long")
+		}
+		if strings.ContainsRune(raw, 0) {
+			return "", fmt.Errorf("contains invalid characters")
 		}
 		b, err := json.Marshal(raw)
 		if err != nil {
@@ -290,7 +352,54 @@ func mapScriptArgs(plugin Plugin, rawArgs []string) (map[string]string, error) {
 	return values, nil
 }
 
-func replaceTokensWithSanitizedLiterals(source string, argValues map[string]string) (string, error) {
+func buildTokenRequiredMap(plugin Plugin) map[string]bool {
+	required := make(map[string]bool)
+
+	for _, def := range plugin.Arguments {
+		name := strings.TrimSpace(def.Name)
+		if name == "" {
+			continue
+		}
+		isReq := isRequiredArg(def.Required)
+		if prev, ok := required[name]; !ok {
+			required[name] = isReq
+		} else {
+			required[name] = prev || isReq
+		}
+	}
+
+	for _, sec := range plugin.Secrets {
+		name := strings.TrimSpace(sec.Name)
+		if name == "" {
+			continue
+		}
+		isReq := isRequiredArg(sec.Required)
+		if prev, ok := required[name]; !ok {
+			required[name] = isReq
+		} else {
+			required[name] = prev || isReq
+		}
+	}
+
+	return required
+}
+
+func optionalDefaultLiteral(argType string) string {
+	switch argType {
+	case "", "string":
+		return `""`
+	case "int":
+		return "0"
+	case "float":
+		return "0.0"
+	case "bool":
+		return "False"
+	default:
+		return `""`
+	}
+}
+
+func replaceTokensWithSanitizedLiterals(source string, argValues map[string]string, secretValues map[string]string, tokenRequired map[string]bool) (string, error) {
 	var replaceErr error
 
 	replaced := tokenLiteralPattern.ReplaceAllStringFunc(source, func(m string) string {
@@ -307,6 +416,16 @@ func replaceTokensWithSanitizedLiterals(source string, argValues map[string]stri
 
 		raw, ok := argValues[name]
 		if !ok {
+			raw, ok = secretValues[name]
+		}
+		if !ok {
+			raw, ok = secretValues[strings.ToLower(name)]
+		}
+		if !ok {
+			req, known := tokenRequired[name]
+			if known && !req {
+				return optionalDefaultLiteral(argType)
+			}
 			replaceErr = fmt.Errorf("missing value for token %q", name)
 			return m
 		}
@@ -395,8 +514,11 @@ func SelectSpecialistScripts(s Specialist, task string, openaiService *openai.Op
 
 	validated := make([]string, 0, len(plan.Scripts))
 	for _, call := range plan.Scripts {
-		fields := strings.Fields(strings.TrimSpace(call))
-		if len(fields) == 0 {
+		fields, splitErr := splitScriptCall(call)
+		if splitErr != nil {
+			if emit != nil {
+				emit(fmt.Sprintf("Script rejected: `%s` (%s)\n\n", call, splitErr.Error()))
+			}
 			continue
 		}
 		scriptName := normalizeScriptName(fields[0])
@@ -417,7 +539,7 @@ func SelectSpecialistScripts(s Specialist, task string, openaiService *openai.Op
 }
 
 // StageSpecialistScripts copies selected specialist scripts into sharedDir so sandbox can run them.
-func StageSpecialistScripts(s Specialist, task string, plan SpecialistScriptPlan, sharedDir string, emit func(string)) ([]StagedScript, error) {
+func StageSpecialistScripts(s Specialist, task string, plan SpecialistScriptPlan, sharedDir string, secretValues map[string]string, emit func(string)) ([]StagedScript, error) {
 	if err := os.MkdirAll(sharedDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create shared scripts dir: %w", err)
 	}
@@ -429,11 +551,18 @@ func StageSpecialistScripts(s Specialist, task string, plan SpecialistScriptPlan
 		pluginByName[normalizeScriptName(p.Path)] = p
 	}
 
-	specialistDir := filepath.Join(specialistsDir, specialistDirName(s.Name))
+	dirName := strings.TrimSpace(s.Directory)
+	if dirName == "" {
+		dirName = specialistDirName(s.Name)
+	}
+	specialistDir := filepath.Join(specialistsDir, dirName)
 	staged := make([]StagedScript, 0, len(plan.Scripts))
 
 	for i, call := range plan.Scripts {
-		fields := strings.Fields(strings.TrimSpace(call))
+		fields, err := splitScriptCall(call)
+		if err != nil {
+			return nil, fmt.Errorf("invalid script call %q: %w", call, err)
+		}
 		if len(fields) == 0 {
 			continue
 		}
@@ -457,7 +586,10 @@ func StageSpecialistScripts(s Specialist, task string, plan SpecialistScriptPlan
 		}
 		argValues["task_input"] = task
 
-		content, err := replaceTokensWithSanitizedLiterals(string(source), argValues)
+		tokenRequired := buildTokenRequiredMap(plugin)
+		tokenRequired["task_input"] = true
+
+		content, err := replaceTokensWithSanitizedLiterals(string(source), argValues, secretValues, tokenRequired)
 		if err != nil {
 			return nil, fmt.Errorf("token conversion failed for %q: %w", call, err)
 		}

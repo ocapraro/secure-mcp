@@ -1,4 +1,12 @@
 import { apiUrl } from "./apiBase";
+import {
+  fetchSecretRequests,
+  fetchSecrets,
+  removeSecret,
+  upsertSecret,
+  type SecretItem,
+  type SecretRequestItem,
+} from "./sessionApi";
 
 type SpecialistInfo = {
   name: string;
@@ -24,6 +32,12 @@ function safeText(v: unknown): string {
 function formatTs(ts: string): string {
   const d = new Date(ts);
   if (Number.isNaN(d.getTime())) return ts;
+  return d.toLocaleString();
+}
+
+function formatMs(ms: number): string {
+  const d = new Date(ms);
+  if (Number.isNaN(d.getTime())) return "";
   return d.toLocaleString();
 }
 
@@ -57,7 +71,7 @@ function renderSpecialistChips(listEl: HTMLElement, specialists: SpecialistInfo[
     btn.type = "button";
     btn.className = `spec-chip${selected === s.name ? " is-active" : ""}`;
     btn.title = safeText(s.resume);
-    btn.textContent = `${safeText(s.name)} (${s.plugin_count})`;
+    btn.textContent = safeText(s.name);
     btn.addEventListener("click", () => onSelect(s.name));
     listEl.appendChild(btn);
   }
@@ -113,6 +127,90 @@ function renderLogs(tableBody: HTMLElement, logs: SpecialistLog[]) {
   }
 }
 
+function renderSecretsTable(
+  tbody: HTMLElement,
+  requests: SecretRequestItem[],
+  secretsByName: Map<string, SecretItem>,
+  onSave: (name: string, value: string) => Promise<void>,
+  onClear: (name: string) => Promise<void>,
+) {
+  tbody.replaceChildren();
+
+  if (requests.length === 0) {
+    const tr = document.createElement("tr");
+    tr.className = "secret-empty-row";
+    tr.innerHTML = `<td colspan="7">No plugin secret requests were declared in specialist bio.xml files.</td>`;
+    tbody.appendChild(tr);
+    return;
+  }
+
+  for (const req of requests) {
+    const saved = secretsByName.get(req.name) ?? null;
+
+    const tr = document.createElement("tr");
+    tr.className = "secret-row";
+
+    const nameTd = document.createElement("td");
+    nameTd.className = "secret-cell-name";
+    nameTd.textContent = req.name;
+
+    const descTd = document.createElement("td");
+    descTd.className = "secret-cell-desc";
+    descTd.textContent = req.description || "(no description)";
+
+    const usedByTd = document.createElement("td");
+    usedByTd.className = "secret-cell-usedby";
+    usedByTd.textContent = req.specialists.length > 0 ? req.specialists.join(", ") : "(unknown)";
+
+    const stateTd = document.createElement("td");
+    stateTd.className = "secret-cell-state";
+    const badge = document.createElement("span");
+    badge.className = `secret-state-badge ${saved?.hasValue ? "set" : "missing"}`;
+    badge.textContent = saved?.hasValue ? "Configured" : req.required ? "Required" : "Optional";
+    stateTd.appendChild(badge);
+
+    const valueTd = document.createElement("td");
+    valueTd.className = "secret-cell-value";
+    const input = document.createElement("input");
+    input.type = "password";
+    input.className = "secret-input";
+    input.placeholder = saved?.hasValue ? "Enter new value to rotate" : "Enter secret value";
+    input.autocomplete = "off";
+
+    const saveBtn = document.createElement("button");
+    saveBtn.type = "button";
+    saveBtn.className = "secret-save";
+    saveBtn.textContent = saved?.hasValue ? "Update" : "Save";
+    saveBtn.addEventListener("click", () => {
+      void onSave(req.name, input.value.trim());
+    });
+
+    const valueWrap = document.createElement("div");
+    valueWrap.className = "secret-edit-wrap";
+    valueWrap.append(input, saveBtn);
+    valueTd.appendChild(valueWrap);
+
+    const updatedTd = document.createElement("td");
+    updatedTd.className = "secret-cell-updated";
+    updatedTd.textContent = saved ? formatMs(saved.updatedAt) : "-";
+
+    const actionsTd = document.createElement("td");
+    actionsTd.className = "secret-cell-actions";
+    const delBtn = document.createElement("button");
+    delBtn.type = "button";
+    delBtn.className = "secret-delete";
+    delBtn.textContent = "Clear";
+    delBtn.disabled = !saved?.hasValue;
+    delBtn.addEventListener("click", () => {
+      void onClear(req.name);
+    });
+    actionsTd.appendChild(delBtn);
+
+    tr.append(nameTd, descTd, usedByTd, stateTd, valueTd, updatedTd, actionsTd);
+    tbody.appendChild(tr);
+  }
+}
+
 export function initSpecialistsTab() {
   const root = document.querySelector<HTMLElement>("#specialistsView");
   if (!root) return { refresh: async () => {} };
@@ -121,13 +219,83 @@ export function initSpecialistsTab() {
   const tbodyEl = root.querySelector<HTMLElement>("#specialistsLogsBody");
   const refreshEl = root.querySelector<HTMLButtonElement>("#specialistsRefresh");
   const statusEl = root.querySelector<HTMLElement>("#specialistsStatus");
+  const secretsStatusEl = root.querySelector<HTMLElement>("#secretsStatus");
+  const secretsTbodyEl = root.querySelector<HTMLElement>("#secretsTableBody");
 
-  if (!chipsEl || !tbodyEl || !refreshEl || !statusEl) {
+  if (
+    !chipsEl ||
+    !tbodyEl ||
+    !refreshEl ||
+    !statusEl ||
+    !secretsStatusEl ||
+    !secretsTbodyEl
+  ) {
     return { refresh: async () => {} };
   }
 
   let selected = "";
   let specialists: SpecialistInfo[] = [];
+  let secretRequests: SecretRequestItem[] = [];
+  let secretsByName = new Map<string, SecretItem>();
+
+  function setSecretsStatus(text: string, isError = false) {
+    secretsStatusEl.textContent = text;
+    secretsStatusEl.classList.toggle("is-error", isError);
+  }
+
+  async function refreshSecrets() {
+    setSecretsStatus("Loading secrets...");
+    try {
+      const [requests, savedSecrets] = await Promise.all([
+        fetchSecretRequests(),
+        fetchSecrets(),
+      ]);
+
+      secretRequests = requests;
+      secretsByName = new Map(savedSecrets.map((s) => [s.name, s]));
+
+      renderSecretsTable(
+        secretsTbodyEl,
+        secretRequests,
+        secretsByName,
+        async (name, value) => {
+          if (!value) {
+            setSecretsStatus("Secret value is required.", true);
+            return;
+          }
+          setSecretsStatus(`Saving ${name}...`);
+          try {
+            await upsertSecret({ name, value });
+            await refreshSecrets();
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : "Failed to save secret";
+            setSecretsStatus(msg, true);
+          }
+        },
+        async (name) => {
+          setSecretsStatus(`Clearing ${name}...`);
+          try {
+            await removeSecret(name);
+            await refreshSecrets();
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : "Failed to clear secret";
+            setSecretsStatus(msg, true);
+          }
+        },
+      );
+
+      const configured = secretRequests.filter((r) => secretsByName.get(r.name)?.hasValue).length;
+      if (secretRequests.length === 0) {
+        setSecretsStatus("No secret requests declared by specialists.");
+      } else {
+        setSecretsStatus(`Configured ${configured}/${secretRequests.length} requested secrets.`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to load secrets";
+      setSecretsStatus(msg, true);
+      renderSecretsTable(secretsTbodyEl, [], new Map(), async () => {}, async () => {});
+    }
+  }
 
   async function refresh() {
     statusEl.textContent = "Loading specialists...";
@@ -154,6 +322,8 @@ export function initSpecialistsTab() {
     } finally {
       refreshEl.disabled = false;
     }
+
+    await refreshSecrets();
   }
 
   refreshEl.addEventListener("click", () => {

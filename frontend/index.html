@@ -67,6 +67,32 @@
                 </div>
               </header>
 
+              <section class="secrets-panel" aria-label="Secrets manager">
+                <div class="secrets-panel-head">
+                  <h3>Secrets</h3>
+                  <p class="secrets-panel-note">Only plugin-requested secrets can be configured. Secret values are never sent to models.</p>
+                </div>
+
+                <p id="secretsStatus" class="secrets-status" role="status">Loading...</p>
+
+                <div class="secrets-table-wrap">
+                  <table class="secrets-table">
+                    <thead>
+                      <tr>
+                        <th>Name</th>
+                        <th>Description</th>
+                        <th>Used by</th>
+                        <th>Status</th>
+                        <th>Set / Update</th>
+                        <th>Updated</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="secretsTableBody"></tbody>
+                  </table>
+                </div>
+              </section>
+
               <div id="specialistsFilterChips" class="spec-chips"></div>
 
               <div class="spec-table-wrap">

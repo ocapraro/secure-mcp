@@ -2,6 +2,7 @@ package database
 
 import (
 	"database/sql"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -71,6 +72,17 @@ func (s *DatabaseService) Init() error {
 			ok INTEGER NOT NULL DEFAULT 0,
 			output TEXT NOT NULL DEFAULT '',
 			error TEXT NOT NULL DEFAULT ''
+		);
+	`)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS secrets (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT NOT NULL UNIQUE,
+			value TEXT NOT NULL,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 	`)
 	if err != nil {
@@ -301,4 +313,105 @@ func (s *DatabaseService) DeleteSessionByID(id int64) error {
 	}
 
 	return tx.Commit()
+}
+
+func (s *DatabaseService) GetSecrets() ([]Secret, error) {
+	rows, err := s.db.Query(`
+		SELECT id, name, value, updated_at
+		FROM secrets
+		ORDER BY name ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	secrets := make([]Secret, 0)
+	for rows.Next() {
+		var item Secret
+		if err := rows.Scan(&item.ID, &item.Name, &item.Value, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		secrets = append(secrets, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return secrets, nil
+}
+
+func (s *DatabaseService) UpsertSecret(secret CreateSecret) (Secret, error) {
+	name := strings.TrimSpace(secret.Name)
+	value := strings.TrimSpace(secret.Value)
+
+	if _, err := s.db.Exec(`
+		INSERT INTO secrets (name, value)
+		VALUES (?, ?)
+		ON CONFLICT(name) DO UPDATE SET
+			value = excluded.value,
+			updated_at = CURRENT_TIMESTAMP
+	`, name, value); err != nil {
+		return Secret{}, err
+	}
+
+	var out Secret
+	err := s.db.QueryRow(`
+		SELECT id, name, value, updated_at
+		FROM secrets
+		WHERE name = ?
+	`, name).Scan(&out.ID, &out.Name, &out.Value, &out.UpdatedAt)
+	if err != nil {
+		return Secret{}, err
+	}
+
+	return out, nil
+}
+
+func (s *DatabaseService) DeleteSecretByName(name string) error {
+	result, err := s.db.Exec(`
+		DELETE FROM secrets
+		WHERE name = ?
+	`, strings.TrimSpace(name))
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+
+	return nil
+}
+
+func (s *DatabaseService) GetSecretValues() (map[string]string, error) {
+	rows, err := s.db.Query(`
+		SELECT name, value
+		FROM secrets
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	values := make(map[string]string)
+	for rows.Next() {
+		var name string
+		var value string
+		if err := rows.Scan(&name, &value); err != nil {
+			return nil, err
+		}
+		values[name] = value
+		values[strings.ToLower(name)] = value
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return values, nil
 }

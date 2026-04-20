@@ -23,6 +23,36 @@ type BackendSession = {
   messages?: BackendMessage[];
 };
 
+type BackendSecret = {
+  id?: number | string;
+  name?: string;
+  has_value?: boolean;
+  updated_at?: string;
+};
+
+type BackendSecretRequest = {
+  name?: string;
+  description?: string;
+  required?: boolean;
+  specialists?: string[];
+  scripts?: string[];
+};
+
+export type SecretItem = {
+  id: string;
+  name: string;
+  hasValue: boolean;
+  updatedAt: number;
+};
+
+export type SecretRequestItem = {
+  name: string;
+  description: string;
+  required: boolean;
+  specialists: string[];
+  scripts: string[];
+};
+
 function toMs(ts: string | undefined): number {
   if (!ts) return Date.now();
   const n = Date.parse(ts);
@@ -57,6 +87,25 @@ function toSessionSummary(s: BackendSession): SessionSummary {
     title: s.title ?? "New chat",
     updatedAt: toMs(s.updated_at),
     modelId: s.model,
+  };
+}
+
+function toSecretItem(s: BackendSecret): SecretItem {
+  return {
+    id: s.id === undefined ? "" : String(s.id),
+    name: s.name ?? "",
+    hasValue: Boolean(s.has_value),
+    updatedAt: toMs(s.updated_at),
+  };
+}
+
+function toSecretRequestItem(s: BackendSecretRequest): SecretRequestItem {
+  return {
+    name: s.name ?? "",
+    description: s.description ?? "",
+    required: Boolean(s.required),
+    specialists: Array.isArray(s.specialists) ? s.specialists.filter((v): v is string => typeof v === "string") : [],
+    scripts: Array.isArray(s.scripts) ? s.scripts.filter((v): v is string => typeof v === "string") : [],
   };
 }
 
@@ -153,4 +202,53 @@ export async function updateSession(
   }
   const data = (await res.json()) as BackendSession;
   return toStoredChat(data);
+}
+
+export async function fetchSecrets(): Promise<SecretItem[]> {
+  const res = await fetch(apiUrl("/api/secrets"));
+  if (!res.ok) {
+    throw new Error(`Failed to list secrets (${res.status})`);
+  }
+  const data = (await res.json()) as BackendSecret[];
+  return Array.isArray(data) ? data.map(toSecretItem) : [];
+}
+
+export async function upsertSecret(input: {
+  name: string;
+  value: string;
+}): Promise<SecretItem> {
+  const res = await fetch(apiUrl("/api/secrets"), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      name: input.name,
+      value: input.value,
+    }),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `Failed to save secret (${res.status})`);
+  }
+  const data = (await res.json()) as BackendSecret;
+  return toSecretItem(data);
+}
+
+export async function removeSecret(name: string): Promise<void> {
+  const res = await fetch(apiUrl(`/api/secrets/${encodeURIComponent(name)}`), {
+    method: "DELETE",
+  });
+  if (res.status === 404) return;
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `Failed to delete secret (${res.status})`);
+  }
+}
+
+export async function fetchSecretRequests(): Promise<SecretRequestItem[]> {
+  const res = await fetch(apiUrl("/api/secret-requests"));
+  if (!res.ok) {
+    throw new Error(`Failed to list secret requests (${res.status})`);
+  }
+  const data = (await res.json()) as BackendSecretRequest[];
+  return Array.isArray(data) ? data.map(toSecretRequestItem).filter((r) => r.name.length > 0) : [];
 }

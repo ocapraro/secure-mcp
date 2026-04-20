@@ -355,6 +355,186 @@ button:disabled {
   border-color: #5a5a5a;
 }
 
+.secrets-panel {
+  border: 1px solid #343434;
+  border-radius: 12px;
+  background: #1c1c1c;
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.secrets-panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.secrets-panel-head h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.secrets-panel-note {
+  margin: 0;
+  color: var(--dim);
+  font-size: 0.8rem;
+}
+
+.secret-input {
+  width: 100%;
+  min-height: 34px;
+  border-radius: 8px;
+  border: 1px solid #3e3e3e;
+  background: #262626;
+  color: var(--text);
+  padding: 0.38rem 0.55rem;
+  font-size: 0.86rem;
+}
+
+.secret-input:focus {
+  outline: 2px solid color-mix(in oklab, #6ea8fe, transparent 55%);
+  outline-offset: 1px;
+}
+
+.secret-save {
+  border: 1px solid #4a4a4a;
+  border-radius: 8px;
+  padding: 0.35rem 0.7rem;
+  min-height: 34px;
+  background: #2f2f2f;
+  font-size: 0.84rem;
+}
+
+.secret-save:hover {
+  background: #373737;
+}
+
+.secrets-status {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.secrets-status.is-error {
+  color: #ff9b9b;
+}
+
+.secrets-table-wrap {
+  overflow: auto;
+  border: 1px solid #343434;
+  border-radius: 10px;
+  background: #181818;
+}
+
+.secrets-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 52rem;
+}
+
+.secrets-table th,
+.secrets-table td {
+  border-bottom: 1px solid #2d2d2d;
+  padding: 0.45rem 0.5rem;
+  text-align: left;
+  font-size: 0.81rem;
+  vertical-align: top;
+}
+
+.secrets-table th {
+  position: sticky;
+  top: 0;
+  background: #252525;
+  z-index: 1;
+  color: #d4d4d4;
+}
+
+.secret-cell-name {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  white-space: nowrap;
+}
+
+.secret-cell-desc {
+  color: #d0d0d0;
+  min-width: 14rem;
+}
+
+.secret-cell-usedby {
+  color: #bcbcbc;
+  min-width: 12rem;
+}
+
+.secret-cell-state {
+  white-space: nowrap;
+}
+
+.secret-state-badge {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 0.12rem 0.5rem;
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.secret-state-badge.set {
+  color: #8de3b5;
+  background: rgba(26, 76, 52, 0.8);
+}
+
+.secret-state-badge.missing {
+  color: #ffd59f;
+  background: rgba(92, 64, 29, 0.8);
+}
+
+.secret-cell-value {
+  min-width: 16rem;
+}
+
+.secret-edit-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.secret-cell-updated {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.secret-cell-actions {
+  width: 1%;
+  white-space: nowrap;
+}
+
+.secret-delete {
+  border: 1px solid #5a3d3d;
+  border-radius: 7px;
+  color: #fecaca;
+  background: #352323;
+  font-size: 0.78rem;
+  padding: 0.2rem 0.5rem;
+}
+
+.secret-delete:hover {
+  background: #442a2a;
+}
+
+.secret-delete:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.secret-empty-row td {
+  text-align: center;
+  color: var(--dim);
+  padding: 0.8rem;
+}
+
 .spec-table-wrap {
   overflow: auto;
   border: 1px solid #343434;
@@ -1025,6 +1205,11 @@ button:disabled {
     z-index: 30;
     transform: translateX(0);
     transition: transform 0.2s ease;
+  }
+
+  .secret-edit-wrap {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .app.sidebar-collapsed .sidebar {

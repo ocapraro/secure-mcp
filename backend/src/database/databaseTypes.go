@@ -53,3 +53,14 @@ type SpecialistLog struct {
 	ID        int64     `json:"id"`
 	CreatedAt time.Time `json:"created_at"`
 }
+
+type CreateSecret struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+type Secret struct {
+	CreateSecret
+	ID        int64     `json:"id"`
+	UpdatedAt time.Time `json:"updated_at"`
+}

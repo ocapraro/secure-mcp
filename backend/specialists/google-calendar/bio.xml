@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<specialist>
+  <name>Google Calendar Assistant</name>
+  <resume>Hi, I'm your Google Calendar specialist. I can list events from a calendar and create new events with specific times and details.</resume>
+  <exampleRequest>Create a calendar event for tomorrow at 2 PM titled Project Check-In</exampleRequest>
+  <plugins>
+    <script>
+      <path>scripts/get-calendar-events.py</path>
+      <description>Fetches events from a Google Calendar within an optional time range.</description>
+      <usage>python scripts/get-calendar-events.py [calendar_id] [time_min] [time_max] [max_results]</usage>
+      <secrets>
+        <secret name="access_token" required="true">OAuth 2.0 Bearer token with Google Calendar scope.</secret>
+      </secrets>
+      <arguments>
+        <argument name="calendar_id" required="false">Calendar ID to query. Defaults to "primary" if omitted.</argument>
+        <argument name="time_min" required="false">RFC3339 timestamp lower bound (for example, 2026-04-20T00:00:00Z).</argument>
+        <argument name="time_max" required="false">RFC3339 timestamp upper bound (for example, 2026-04-27T00:00:00Z).</argument>
+        <argument name="max_results" required="false">Maximum number of events to return. Defaults to 50.</argument>
+      </arguments>
+      <output>JSON object with fields: calendar_id, count, events[]. Each event includes: id, summary, status, start, end, location, description, html_link.</output>
+      <example>python scripts/get-calendar-events.py primary 2026-04-20T00:00:00Z 2026-04-27T00:00:00Z 25</example>
+    </script>
+    <script>
+      <path>scripts/create-calendar-event.py</path>
+      <description>Creates a new event in Google Calendar.</description>
+      <usage>python scripts/create-calendar-event.py &lt;summary&gt; &lt;start_time&gt; &lt;end_time&gt; [calendar_id] [timezone] [description] [location]</usage>
+      <secrets>
+        <secret name="access_token" required="true">OAuth 2.0 Bearer token with permission to create events.</secret>
+      </secrets>
+      <arguments>
+        <argument name="summary" required="true">Title of the event.</argument>
+        <argument name="start_time" required="true">RFC3339 start datetime (for example, 2026-04-20T14:00:00-04:00).</argument>
+        <argument name="end_time" required="true">RFC3339 end datetime (for example, 2026-04-20T15:00:00-04:00).</argument>
+        <argument name="calendar_id" required="false">Calendar ID to write to. Defaults to "primary".</argument>
+        <argument name="timezone" required="false">IANA timezone for the event (for example, America/New_York). Defaults to UTC.</argument>
+        <argument name="description" required="false">Optional long-form description for the event.</argument>
+        <argument name="location" required="false">Optional event location.</argument>
+      </arguments>
+      <output>JSON object with fields: id, status, summary, start, end, html_link, calendar_id.</output>
+      <example>python scripts/create-calendar-event.py "Project Check-In" 2026-04-20T14:00:00-04:00 2026-04-20T15:00:00-04:00 primary America/New_York "Sprint review" "Room 204"</example>
+    </script>
+  </plugins>
+</specialist>

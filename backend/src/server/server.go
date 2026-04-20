@@ -6,11 +6,13 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"smcp/agents"
 	"smcp/database"
 	"smcp/openai"
 	"smcp/sandbox"
 	"smcp/types"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -36,6 +38,23 @@ type ndjsonStreamer struct {
 	enc     *json.Encoder
 	flusher http.Flusher
 }
+
+type secretRequestInfo struct {
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Required    bool     `json:"required"`
+	Specialists []string `json:"specialists"`
+	Scripts     []string `json:"scripts"`
+}
+
+type secretResponse struct {
+	ID        int64     `json:"id"`
+	Name      string    `json:"name"`
+	HasValue  bool      `json:"has_value"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+var secretNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,63}$`)
 
 func latestUserMessage(messages []openai.OllamaMessage) string {
 	for i := len(messages) - 1; i >= 0; i-- {
@@ -105,7 +124,98 @@ func markdownList(items []string) string {
 	return b.String()
 }
 
-func runDelegatedTasks(initialMessage string, specialistMap map[string]agents.Specialist, openaiService *openai.OpenAIService, chatModel string, ctx *http.Request, emit func(string)) ([]taskResult, error) {
+func buildSecretRequests(specialists []agents.Specialist) []secretRequestInfo {
+	byName := map[string]*secretRequestInfo{}
+	seenSpecialist := map[string]map[string]bool{}
+	seenScript := map[string]map[string]bool{}
+
+	for _, s := range specialists {
+		for _, p := range s.Plugins {
+			scriptName := filepath.Base(strings.TrimSpace(p.Path))
+			for _, sec := range p.Secrets {
+				name := strings.TrimSpace(sec.Name)
+				if name == "" {
+					continue
+				}
+				if !secretNamePattern.MatchString(name) {
+					continue
+				}
+
+				item, ok := byName[name]
+				if !ok {
+					item = &secretRequestInfo{
+						Name:        name,
+						Description: strings.TrimSpace(sec.Value),
+						Required:    strings.EqualFold(strings.TrimSpace(sec.Required), "true"),
+						Specialists: []string{},
+						Scripts:     []string{},
+					}
+					byName[name] = item
+					seenSpecialist[name] = map[string]bool{}
+					seenScript[name] = map[string]bool{}
+				}
+
+				if item.Description == "" {
+					item.Description = strings.TrimSpace(sec.Value)
+				}
+				item.Required = item.Required || strings.EqualFold(strings.TrimSpace(sec.Required), "true")
+
+				if !seenSpecialist[name][s.Name] {
+					item.Specialists = append(item.Specialists, s.Name)
+					seenSpecialist[name][s.Name] = true
+				}
+				if scriptName != "" && !seenScript[name][scriptName] {
+					item.Scripts = append(item.Scripts, scriptName)
+					seenScript[name][scriptName] = true
+				}
+			}
+		}
+	}
+
+	names := make([]string, 0, len(byName))
+	for name := range byName {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	out := make([]secretRequestInfo, 0, len(names))
+	for _, name := range names {
+		item := byName[name]
+		sort.Strings(item.Specialists)
+		sort.Strings(item.Scripts)
+		out = append(out, *item)
+	}
+
+	return out
+}
+
+func secretNameSetFromRequests(requests []secretRequestInfo) map[string]bool {
+	allowed := make(map[string]bool, len(requests)*2)
+	for _, req := range requests {
+		name := strings.TrimSpace(req.Name)
+		if name == "" {
+			continue
+		}
+		allowed[name] = true
+		allowed[strings.ToLower(name)] = true
+	}
+	return allowed
+}
+
+func redactSecrets(secrets []database.Secret) []secretResponse {
+	out := make([]secretResponse, 0, len(secrets))
+	for _, s := range secrets {
+		out = append(out, secretResponse{
+			ID:        s.ID,
+			Name:      s.Name,
+			HasValue:  strings.TrimSpace(s.Value) != "",
+			UpdatedAt: s.UpdatedAt,
+		})
+	}
+	return out
+}
+
+func runDelegatedTasks(initialMessage string, specialistMap map[string]agents.Specialist, openaiService *openai.OpenAIService, chatModel string, secretValues map[string]string, ctx *http.Request, emit func(string)) ([]taskResult, error) {
 	if err := sandbox.ClearSharedScriptsDir(); err != nil {
 		return nil, fmt.Errorf("failed to prepare shared scripts dir: %w", err)
 	}
@@ -217,7 +327,7 @@ func runDelegatedTasks(initialMessage string, specialistMap map[string]agents.Sp
 					}
 				}
 			} else {
-				staged, stageErr := agents.StageSpecialistScripts(s, specialistTaskPrompt, plan, sandbox.SharedScriptsDir(), emit)
+				staged, stageErr := agents.StageSpecialistScripts(s, specialistTaskPrompt, plan, sandbox.SharedScriptsDir(), secretValues, emit)
 				if stageErr != nil {
 					if emit != nil {
 						emit(fmt.Sprintf("Staging error: %s\n", stageErr.Error()))
@@ -530,8 +640,15 @@ func InitServer(mux *http.ServeMux, dbService *database.DatabaseService) {
 		streamer := newNDJSONStreamer(w)
 		streamer.Send("## Working\n\nStarting orchestration...\n\n")
 
+		secretValues, err := dbService.GetSecretValues()
+		if err != nil {
+			streamer.Send("## Error\n\nFailed to load secrets for specialist execution.\n")
+			streamer.Done()
+			return
+		}
+
 		specialistMap := buildSpecialistMap()
-		results, err := runDelegatedTasks(initialMessage, specialistMap, ollamaService, chatReq.Model, r, streamer.Send)
+		results, err := runDelegatedTasks(initialMessage, specialistMap, ollamaService, chatReq.Model, secretValues, r, streamer.Send)
 		if err != nil {
 			streamer.Send(fmt.Sprintf("## Error\n\n%s\n", err.Error()))
 			streamer.Done()
@@ -623,5 +740,82 @@ func InitServer(mux *http.ServeMux, dbService *database.DatabaseService) {
 			logs = []database.SpecialistLog{}
 		}
 		_ = json.NewEncoder(w).Encode(logs)
+	})
+
+	mux.HandleFunc("GET /api/secret-requests", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		requests := buildSecretRequests(agents.ListSpecialists())
+		_ = json.NewEncoder(w).Encode(requests)
+	})
+
+	mux.HandleFunc("GET /api/secrets", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		secrets, err := dbService.GetSecrets()
+		if err != nil {
+			http.Error(w, "failed to fetch secrets", http.StatusInternalServerError)
+			return
+		}
+		if secrets == nil {
+			secrets = []database.Secret{}
+		}
+		_ = json.NewEncoder(w).Encode(redactSecrets(secrets))
+	})
+
+	mux.HandleFunc("POST /api/secrets", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		var payload database.CreateSecret
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, "invalid json", http.StatusBadRequest)
+			return
+		}
+
+		payload.Name = strings.TrimSpace(payload.Name)
+		payload.Value = strings.TrimSpace(payload.Value)
+
+		if !secretNamePattern.MatchString(payload.Name) {
+			http.Error(w, "secret name must match [A-Za-z_][A-Za-z0-9_]{0,63}", http.StatusBadRequest)
+			return
+		}
+
+		allowed := secretNameSetFromRequests(buildSecretRequests(agents.ListSpecialists()))
+		if !allowed[payload.Name] && !allowed[strings.ToLower(payload.Name)] {
+			http.Error(w, "secret name is not requested by any plugin", http.StatusBadRequest)
+			return
+		}
+
+		if payload.Value == "" {
+			http.Error(w, "secret value is required", http.StatusBadRequest)
+			return
+		}
+
+		secret, err := dbService.UpsertSecret(payload)
+		if err != nil {
+			http.Error(w, "failed to save secret", http.StatusInternalServerError)
+			return
+		}
+
+		_ = json.NewEncoder(w).Encode(secretResponse{
+			ID:        secret.ID,
+			Name:      secret.Name,
+			HasValue:  strings.TrimSpace(secret.Value) != "",
+			UpdatedAt: secret.UpdatedAt,
+		})
+	})
+
+	mux.HandleFunc("DELETE /api/secrets/{name}", func(w http.ResponseWriter, r *http.Request) {
+		name := strings.TrimSpace(r.PathValue("name"))
+		if !secretNamePattern.MatchString(name) {
+			http.Error(w, "invalid secret name", http.StatusBadRequest)
+			return
+		}
+
+		err := dbService.DeleteSecretByName(name)
+		if err != nil {
+			http.Error(w, "secret not found", http.StatusNotFound)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
 	})
 }

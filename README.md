@@ -190,7 +190,15 @@ Shut down the VM and export the disk as `backend/data/sandbox.qcow2`.
 
 1. Create `backend/specialists/<your-name>/`
 2. Add `bio.xml` — see `weather-man/bio.xml` as a reference
-3. Add plugin scripts under `scripts/`. Use `__TOKEN_<argname>:string__` placeholders for arguments and emit results as:
+3. In each plugin, declare any required secrets in `bio.xml` so they appear in the dashboard and can be injected at runtime:
+
+```xml
+<secrets>
+  <secret name="access_token" required="true">OAuth bearer token</secret>
+</secrets>
+```
+
+4. Add plugin scripts under `scripts/`. Use `__TOKEN_<argname>:string__` placeholders for arguments and emit results as:
 
 ```python
 SCRIPT_ID = "__SCRIPT_ID__"   # injected at staging time
@@ -204,6 +212,8 @@ emit({
 ```
 
 The orchestrator injects the correct staged filename into `SCRIPT_ID` before running, so results are automatically matched back to the right task.
+
+Secret values are resolved at staging time by token name and are never passed to planner/delegator/specialist models.
 
 ## Environment variables
 

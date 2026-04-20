@@ -13,11 +13,18 @@ type ScriptArgument struct {
 	Value    string `xml:",chardata"`
 }
 
+type ScriptSecret struct {
+	Name     string `xml:"name,attr"`
+	Required string `xml:"required,attr"`
+	Value    string `xml:",chardata"`
+}
+
 type Plugin struct {
 	Path        string           `xml:"path"`
 	Description string           `xml:"description"`
 	Usage       string           `xml:"usage"`
 	Arguments   []ScriptArgument `xml:"arguments>argument"`
+	Secrets     []ScriptSecret   `xml:"secrets>secret"`
 	Output      string           `xml:"output"`
 	Example     string           `xml:"example"`
 }
@@ -27,6 +34,7 @@ type Specialist struct {
 	Resume         string   `xml:"resume"`
 	ExampleRequest string   `xml:"exampleRequest"`
 	Plugins        []Plugin `xml:"plugins>script"`
+	Directory      string   `xml:"-"`
 }
 
 type specialistXML struct {
@@ -62,6 +70,7 @@ func ListSpecialists() []Specialist {
 			log.Printf("warning: failed to parse %s: %v", bioPath, err)
 			continue
 		}
+		s.Specialist.Directory = entry.Name()
 		specialists = append(specialists, s.Specialist)
 	}
 	return specialists
