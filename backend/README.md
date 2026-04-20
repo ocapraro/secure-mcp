@@ -46,9 +46,11 @@ exec > /dev/ttyAMA0 2>&1
 ulimit -t 5
 ulimit -v 262144
 
-ip link set eth0 up || true
-dhcpcd eth0 || true
-sleep 1
+if ip link show eth0 >/dev/null 2>&1; then
+  ip link set eth0 up || true
+  dhcpcd eth0 || true
+  sleep 1
+fi
 
 SCRIPT_DIR="/mnt/scripts"
 
@@ -68,15 +70,15 @@ for script in "$SCRIPT_DIR"/*.py; do
   found=1
   name=$(basename "$script")
 
-  output=$(python3 "$script" 2>&1)
-  code=$?
+  printf '%s\n' "{\"type\":\"script_start\",\"script\":\"$name\"}"
 
-  escaped=$(printf '%s' "$output" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')
+  python3 "$script"
+  code=$?
 
   ok=false
   [ "$code" -eq 0 ] && ok=true
 
-  printf '%s\n' "{\"type\":\"result\",\"script\":\"$name\",\"ok\":$ok,\"exit_code\":$code,\"output\":$escaped}"
+  printf '%s\n' "{\"type\":\"result\",\"script\":\"$name\",\"ok\":$ok,\"exit_code\":$code}"
 done
 
 if [ "$found" -eq 0 ]; then

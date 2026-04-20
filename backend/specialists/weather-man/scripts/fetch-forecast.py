@@ -1,17 +1,50 @@
 #!/usr/bin/env python3
 # fetch-forecast.py
-# Fetches a 3-day weather forecast for a given location.
-# Usage: python fetch-forecast.py <location>
 
-import sys
 import json
+import sys
+import time
 import urllib.request
 import urllib.parse
+import subprocess
+
+LOCATION = "__TOKEN_location:string__"
+SCRIPT_ID = "__SCRIPT_ID__"
+TTY = "/dev/ttyAMA0"
+
+
+def emit(obj: dict) -> None:
+    with open(TTY, "w") as f:
+        f.write(json.dumps(obj) + "\n")
+        f.flush()
+
+
+def wait_for_network(timeout: int = 15) -> None:
+    for _ in range(timeout):
+        has_ipv4 = subprocess.run(
+            ["sh", "-c", "ip -4 addr show eth0 | grep -q 'inet '"]
+        ).returncode == 0
+
+        has_route = subprocess.run(
+            ["sh", "-c", "ip route | grep -q '^default '"]
+        ).returncode == 0
+
+        if has_ipv4 and has_route:
+            return
+
+        time.sleep(1)
+
+    raise RuntimeError("network was not ready in time")
+
 
 def fetch_forecast(location: str) -> dict:
     encoded = urllib.parse.quote(location)
     url = f"https://wttr.in/{encoded}?format=j1"
-    req = urllib.request.Request(url, headers={"User-Agent": "weather-man-plugin/1.0"})
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": "weather-man-plugin/1.0"}
+    )
+
     with urllib.request.urlopen(req, timeout=10) as resp:
         data = json.loads(resp.read().decode())
 
@@ -34,6 +67,7 @@ def fetch_forecast(location: str) -> dict:
                 "wind_speed_kmph": h["windspeedKmph"],
                 "description": h["weatherDesc"][0]["value"],
             })
+
         days.append({
             "date": day["date"],
             "max_temp_c": day["maxtempC"],
@@ -47,19 +81,25 @@ def fetch_forecast(location: str) -> dict:
         })
 
     return {
+        "type": "forecast_result",
         "location": f"{area_name}, {country}",
         "forecast_days": days,
+        "ok": True,
     }
 
+
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print(json.dumps({"error": "Usage: fetch-forecast.py <location>"}))
+    if LOCATION.startswith("__TOKEN_"):
+        emit({"type": "result", "script": SCRIPT_ID, "ok": False, "output": json.dumps({"error": "location token was not replaced"})})
         sys.exit(1)
 
-    location = " ".join(sys.argv[1:])
     try:
-        result = fetch_forecast(location)
-        print(json.dumps(result, indent=2))
+        emit({"type": "status", "msg": "waiting for network"})
+        wait_for_network()
+
+        result = fetch_forecast(LOCATION)
+        emit({"type": "result", "script": SCRIPT_ID, "ok": True, "output": json.dumps(result)})
+
     except Exception as e:
-        print(json.dumps({"error": str(e)}))
+        emit({"type": "result", "script": SCRIPT_ID, "ok": False, "output": json.dumps({"error": str(e)})})
         sys.exit(1)

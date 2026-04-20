@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"smcp/openai"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 type SpecialistScriptPlan struct {
@@ -76,16 +79,87 @@ func parseScriptPlan(raw string) (SpecialistScriptPlan, error) {
 		raw = strings.TrimPrefix(raw, "json")
 		raw = strings.TrimSpace(raw)
 	}
+	raw = strings.TrimSpace(raw)
+	raw = strings.TrimSuffix(raw, "`")
+	raw = strings.TrimSpace(raw)
 
 	var plan SpecialistScriptPlan
-	if err := json.Unmarshal([]byte(raw), &plan); err != nil {
-		return SpecialistScriptPlan{}, err
+	if err := json.Unmarshal([]byte(raw), &plan); err == nil {
+		return plan, nil
 	}
-	return plan, nil
+
+	if candidate, ok := extractFirstJSONObject(raw); ok {
+		if err := json.Unmarshal([]byte(candidate), &plan); err == nil {
+			return plan, nil
+		}
+	}
+
+	// Tolerate common LLM formatting issue: one or more extra trailing '}' characters.
+	fixed := strings.TrimSpace(raw)
+	for strings.HasSuffix(fixed, "}") {
+		openCount := strings.Count(fixed, "{")
+		closeCount := strings.Count(fixed, "}")
+		if closeCount <= openCount {
+			break
+		}
+		fixed = strings.TrimSpace(fixed[:len(fixed)-1])
+		if err := json.Unmarshal([]byte(fixed), &plan); err == nil {
+			return plan, nil
+		}
+	}
+
+	return SpecialistScriptPlan{}, fmt.Errorf("invalid specialist script plan JSON")
+}
+
+func extractFirstJSONObject(raw string) (string, bool) {
+	start := strings.IndexByte(raw, '{')
+	if start < 0 {
+		return "", false
+	}
+
+	depth := 0
+	inString := false
+	escaped := false
+
+	for i := start; i < len(raw); i++ {
+		c := raw[i]
+
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if c == '\\' {
+				escaped = true
+				continue
+			}
+			if c == '"' {
+				inString = false
+			}
+			continue
+		}
+
+		switch c {
+		case '"':
+			inString = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return strings.TrimSpace(raw[start : i+1]), true
+			}
+		}
+	}
+
+	return "", false
 }
 
 func inferLocationFromTask(task string) string {
 	lower := strings.ToLower(task)
+	if strings.Contains(lower, "san francisco") {
+		return "San Francisco"
+	}
 	if strings.Contains(lower, "japan") {
 		return "Japan"
 	}
@@ -96,6 +170,44 @@ func inferLocationFromTask(task string) string {
 		return "Tokyo"
 	}
 	return "New York"
+}
+
+func looksLikeLocationPlaceholder(v string) bool {
+	v = strings.TrimSpace(strings.ToLower(v))
+	if v == "" {
+		return true
+	}
+	if strings.HasPrefix(v, "<") && strings.HasSuffix(v, ">") {
+		return true
+	}
+	if v == "location" || v == "city" || v == "city_name" || v == "current location" || v == "current city" {
+		return true
+	}
+	return false
+}
+
+func normalizeArgValue(name, value, task string) string {
+	nameLower := strings.ToLower(strings.TrimSpace(name))
+	v := strings.TrimSpace(value)
+
+	if nameLower != "location" {
+		return v
+	}
+
+	inferred := inferLocationFromTask(task)
+	inferredExplicit := inferred != "" && inferred != "New York"
+
+	if inferredExplicit {
+		if looksLikeLocationPlaceholder(v) || !strings.EqualFold(v, inferred) {
+			return inferred
+		}
+	}
+
+	if looksLikeLocationPlaceholder(v) {
+		return inferred
+	}
+
+	return v
 }
 
 func fallbackScriptCall(allowed map[string]string, task string) string {
@@ -112,34 +224,136 @@ func fallbackScriptCall(allowed map[string]string, task string) string {
 	return ""
 }
 
-func buildScriptArgInjector(args []string) (string, error) {
-	if len(args) == 0 {
-		return "", nil
-	}
-	b, err := json.Marshal(args)
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("import sys\nif len(sys.argv) == 1:\n    sys.argv = [__file__] + %s\n\n", string(b)), nil
+var tokenLiteralPattern = regexp.MustCompile(`"__TOKEN_([A-Za-z_][A-Za-z0-9_]*)(?::(string|int|float|bool))?__"`)
+var safeStringPattern = regexp.MustCompile(`^[\p{L}\p{N} .,'_\-/]{1,200}$`)
+
+func isRequiredArg(required string) bool {
+	return strings.EqualFold(strings.TrimSpace(required), "true")
 }
 
-func withInjectedArgs(source string, args []string) (string, error) {
-	injector, err := buildScriptArgInjector(args)
-	if err != nil {
-		return "", err
-	}
-	if injector == "" {
-		return source, nil
+func sanitizeTypedArg(raw string, argType string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if !utf8.ValidString(raw) {
+		return "", fmt.Errorf("invalid UTF-8")
 	}
 
-	if strings.HasPrefix(source, "#!") {
-		if i := strings.IndexByte(source, '\n'); i >= 0 {
-			return source[:i+1] + injector + source[i+1:], nil
+	switch argType {
+	case "", "string":
+		if raw == "" {
+			return "", fmt.Errorf("must not be empty")
 		}
-		return source + "\n" + injector, nil
+		if !safeStringPattern.MatchString(raw) {
+			return "", fmt.Errorf("contains unsupported characters")
+		}
+		b, err := json.Marshal(raw)
+		if err != nil {
+			return "", err
+		}
+		return string(b), nil
+	case "int":
+		v, err := strconv.Atoi(raw)
+		if err != nil {
+			return "", fmt.Errorf("must be an integer")
+		}
+		return strconv.Itoa(v), nil
+	case "float":
+		v, err := strconv.ParseFloat(raw, 64)
+		if err != nil {
+			return "", fmt.Errorf("must be a number")
+		}
+		return strconv.FormatFloat(v, 'f', -1, 64), nil
+	case "bool":
+		v, err := strconv.ParseBool(strings.ToLower(raw))
+		if err != nil {
+			return "", fmt.Errorf("must be true or false")
+		}
+		if v {
+			return "True", nil
+		}
+		return "False", nil
+	default:
+		return "", fmt.Errorf("unsupported token type %q", argType)
+	}
+}
+
+func mapScriptArgs(plugin Plugin, rawArgs []string, task string) (map[string]string, error) {
+	values := make(map[string]string)
+	defs := plugin.Arguments
+
+	if len(defs) == 0 {
+		if len(rawArgs) > 0 {
+			return nil, fmt.Errorf("script does not declare arguments, but values were provided")
+		}
+		return values, nil
 	}
 
-	return injector + source, nil
+	for i, def := range defs {
+		name := strings.TrimSpace(def.Name)
+		if name == "" {
+			return nil, fmt.Errorf("plugin argument with empty name")
+		}
+
+		var v string
+		if i == len(defs)-1 {
+			if len(rawArgs) > i {
+				v = strings.Join(rawArgs[i:], " ")
+			}
+		} else if len(rawArgs) > i {
+			v = rawArgs[i]
+		}
+
+		v = normalizeArgValue(name, v, task)
+
+		if strings.TrimSpace(v) == "" {
+			if isRequiredArg(def.Required) {
+				return nil, fmt.Errorf("missing required argument %q", name)
+			}
+			continue
+		}
+		values[name] = v
+	}
+
+	return values, nil
+}
+
+func replaceTokensWithSanitizedLiterals(source string, argValues map[string]string) (string, error) {
+	var replaceErr error
+
+	replaced := tokenLiteralPattern.ReplaceAllStringFunc(source, func(m string) string {
+		if replaceErr != nil {
+			return m
+		}
+		parts := tokenLiteralPattern.FindStringSubmatch(m)
+		if len(parts) < 3 {
+			replaceErr = fmt.Errorf("invalid token format %q", m)
+			return m
+		}
+		name := parts[1]
+		argType := parts[2]
+
+		raw, ok := argValues[name]
+		if !ok {
+			replaceErr = fmt.Errorf("missing value for token %q", name)
+			return m
+		}
+
+		lit, err := sanitizeTypedArg(raw, argType)
+		if err != nil {
+			replaceErr = fmt.Errorf("invalid value for %q: %w", name, err)
+			return m
+		}
+		return lit
+	})
+
+	if replaceErr != nil {
+		return "", replaceErr
+	}
+
+	if tokenLiteralPattern.MatchString(replaced) {
+		return "", fmt.Errorf("unresolved token remains after conversion")
+	}
+
+	return replaced, nil
 }
 
 func specialistDirName(name string) string {
@@ -229,16 +443,16 @@ func SelectSpecialistScripts(s Specialist, task string, openaiService *openai.Op
 }
 
 // StageSpecialistScripts copies selected specialist scripts into sharedDir so sandbox can run them.
-func StageSpecialistScripts(s Specialist, plan SpecialistScriptPlan, sharedDir string, emit func(string)) ([]StagedScript, error) {
+func StageSpecialistScripts(s Specialist, task string, plan SpecialistScriptPlan, sharedDir string, emit func(string)) ([]StagedScript, error) {
 	if err := os.MkdirAll(sharedDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create shared scripts dir: %w", err)
 	}
 
 	batchID := time.Now().UnixNano()
 
-	pluginPaths := make(map[string]string, len(s.Plugins))
+	pluginByName := make(map[string]Plugin, len(s.Plugins))
 	for _, p := range s.Plugins {
-		pluginPaths[normalizeScriptName(p.Path)] = p.Path
+		pluginByName[normalizeScriptName(p.Path)] = p
 	}
 
 	specialistDir := filepath.Join(specialistsDir, specialistDirName(s.Name))
@@ -251,10 +465,11 @@ func StageSpecialistScripts(s Specialist, plan SpecialistScriptPlan, sharedDir s
 		}
 
 		scriptName := normalizeScriptName(fields[0])
-		relPath, ok := pluginPaths[scriptName]
+		plugin, ok := pluginByName[scriptName]
 		if !ok {
 			return nil, fmt.Errorf("script %q is not configured for specialist %q", scriptName, s.Name)
 		}
+		relPath := plugin.Path
 
 		sourcePath := filepath.Join(specialistDir, relPath)
 		source, err := os.ReadFile(sourcePath)
@@ -262,12 +477,24 @@ func StageSpecialistScripts(s Specialist, plan SpecialistScriptPlan, sharedDir s
 			return nil, fmt.Errorf("read source script %s: %w", sourcePath, err)
 		}
 
-		content, err := withInjectedArgs(string(source), fields[1:])
+		argValues, err := mapScriptArgs(plugin, fields[1:], task)
 		if err != nil {
-			return nil, fmt.Errorf("prepare script %q: %w", call, err)
+			return nil, fmt.Errorf("parse args for %q: %w", call, err)
+		}
+
+		content, err := replaceTokensWithSanitizedLiterals(string(source), argValues)
+		if err != nil {
+			return nil, fmt.Errorf("token conversion failed for %q: %w", call, err)
 		}
 
 		stagedFile := fmt.Sprintf("%s-%s-%d-%d.py", specialistDirName(s.Name), scriptName, batchID, i+1)
+
+		// Inject SCRIPT_ID so each script can include its own filename in emitted JSON,
+		// allowing the orchestrator to match sandbox output back to the staged script.
+		content = strings.ReplaceAll(content, `"__SCRIPT_ID__"`, fmt.Sprintf(`"%s"`, stagedFile))
+		content = strings.ReplaceAll(content, `'__SCRIPT_ID__'`, fmt.Sprintf(`'%s'`, stagedFile))
+		content = strings.ReplaceAll(content, `__SCRIPT_ID__`, stagedFile)
+
 		destPath := filepath.Join(sharedDir, stagedFile)
 		if err := os.WriteFile(destPath, []byte(content), 0o644); err != nil {
 			return nil, fmt.Errorf("write staged script %s: %w", destPath, err)

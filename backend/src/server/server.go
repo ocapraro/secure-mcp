@@ -158,21 +158,33 @@ func runDelegatedTasks(initialMessage string, specialistMap map[string]agents.Sp
 	}
 	pending := make([]pendingSpecialistTask, 0)
 
+	runGeneralistTask := func(task string) (string, error) {
+		answer, err := openaiService.SendChatPatiently(ctx.Context(), openai.OllamaChatRequest{
+			Model: chatModel,
+			Messages: []openai.OllamaMessage{
+				{Role: "system", Content: "You are a helpful general assistant. Answer the task accurately and concisely."},
+				{Role: "user", Content: task},
+			},
+		})
+		if err != nil {
+			return "", err
+		}
+		return answer, nil
+	}
+
 	for index, assignment := range delegated.Assignments {
 		tr := taskResult{Task: assignment.Task, Assignee: assignment.Assignee}
 		assigneeLower := strings.ToLower(assignment.Assignee)
+		specialistTaskPrompt := assignment.Task
+		if strings.TrimSpace(initialMessage) != "" {
+			specialistTaskPrompt = fmt.Sprintf("%s\n\nUser request context: %s", assignment.Task, initialMessage)
+		}
 		if emit != nil {
 			emit(fmt.Sprintf("### Task %d\nTask: %s\nAssigned to: %s\n\n", index+1, assignment.Task, assignment.Assignee))
 		}
 
 		if assigneeLower == "generalist" {
-			answer, err := openaiService.SendChatPatiently(ctx.Context(), openai.OllamaChatRequest{
-				Model: chatModel,
-				Messages: []openai.OllamaMessage{
-					{Role: "system", Content: "You are a helpful general assistant. Answer the task accurately and concisely."},
-					{Role: "user", Content: assignment.Task},
-				},
-			})
+			answer, err := runGeneralistTask(assignment.Task)
 			if err != nil {
 				tr.Error = err.Error()
 				if emit != nil {
@@ -185,18 +197,44 @@ func runDelegatedTasks(initialMessage string, specialistMap map[string]agents.Sp
 				}
 			}
 		} else if s, ok := specialistMap[assigneeLower]; ok {
-			plan, err := agents.SelectSpecialistScripts(s, assignment.Task, openaiService, ctx.Context(), emit)
+			plan, err := agents.SelectSpecialistScripts(s, specialistTaskPrompt, openaiService, ctx.Context(), emit)
 			if err != nil {
-				tr.Error = err.Error()
 				if emit != nil {
-					emit(fmt.Sprintf("Specialist error: %s\n\n", tr.Error))
+					emit(fmt.Sprintf("Specialist error: %s\n", err.Error()))
+					emit("Falling back to Generalist for this task.\n\n")
+				}
+				answer, fallbackErr := runGeneralistTask(assignment.Task)
+				if fallbackErr != nil {
+					tr.Error = fallbackErr.Error()
+					if emit != nil {
+						emit(fmt.Sprintf("Generalist fallback error: %s\n\n", tr.Error))
+					}
+				} else {
+					tr.Assignee = "Generalist"
+					tr.Answer = answer
+					if emit != nil {
+						emit(fmt.Sprintf("Generalist fallback result\n\n%s\n\n", answer))
+					}
 				}
 			} else {
-				staged, stageErr := agents.StageSpecialistScripts(s, plan, sandbox.SharedScriptsDir(), emit)
+				staged, stageErr := agents.StageSpecialistScripts(s, specialistTaskPrompt, plan, sandbox.SharedScriptsDir(), emit)
 				if stageErr != nil {
-					tr.Error = stageErr.Error()
 					if emit != nil {
-						emit(fmt.Sprintf("Staging error: %s\n\n", tr.Error))
+						emit(fmt.Sprintf("Staging error: %s\n", stageErr.Error()))
+						emit("Falling back to Generalist for this task.\n\n")
+					}
+					answer, fallbackErr := runGeneralistTask(assignment.Task)
+					if fallbackErr != nil {
+						tr.Error = fallbackErr.Error()
+						if emit != nil {
+							emit(fmt.Sprintf("Generalist fallback error: %s\n\n", tr.Error))
+						}
+					} else {
+						tr.Assignee = "Generalist"
+						tr.Answer = answer
+						if emit != nil {
+							emit(fmt.Sprintf("Generalist fallback result\n\n%s\n\n", answer))
+						}
 					}
 				} else {
 					pending = append(pending, pendingSpecialistTask{
@@ -208,13 +246,7 @@ func runDelegatedTasks(initialMessage string, specialistMap map[string]agents.Sp
 				}
 			}
 		} else {
-			answer, err := openaiService.SendChatPatiently(ctx.Context(), openai.OllamaChatRequest{
-				Model: chatModel,
-				Messages: []openai.OllamaMessage{
-					{Role: "system", Content: "You are a helpful general assistant. Answer the task accurately and concisely."},
-					{Role: "user", Content: assignment.Task},
-				},
-			})
+			answer, err := runGeneralistTask(assignment.Task)
 			if err != nil {
 				tr.Error = err.Error()
 				if emit != nil {

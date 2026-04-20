@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -17,6 +18,7 @@ const defaultSharedScriptsDir = "../shared-scripts"
 type VMMessage struct {
 	Type     string `json:"type"`
 	Msg      string `json:"msg,omitempty"`
+	Message  string `json:"message,omitempty"`
 	Script   string `json:"script,omitempty"`
 	OK       bool   `json:"ok,omitempty"`
 	ExitCode int    `json:"exit_code,omitempty"`
@@ -30,6 +32,16 @@ func SharedScriptsDir() string {
 	return defaultSharedScriptsDir
 }
 
+func SandboxTimeout() time.Duration {
+	if raw := strings.TrimSpace(os.Getenv("SANDBOX_TIMEOUT_SECONDS")); raw != "" {
+		if sec, err := strconv.Atoi(raw); err == nil && sec > 0 {
+			return time.Duration(sec) * time.Second
+		}
+	}
+	// VM boot + multi-script network calls regularly exceed 20s.
+	return 240 * time.Second
+}
+
 func RunSandbox(ctx context.Context) (results []VMMessage, retErr error) {
 	defer func() {
 		if err := ClearSharedScriptsDir(); err != nil {
@@ -41,11 +53,10 @@ func RunSandbox(ctx context.Context) (results []VMMessage, retErr error) {
 		}
 	}()
 
-	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, SandboxTimeout())
 	defer cancel()
 
-	cmd := exec.CommandContext(
-		ctx,
+	cmd := exec.Command(
 		"qemu-system-aarch64",
 		"-machine", "virt,accel=hvf",
 		"-cpu", "host",
@@ -84,6 +95,61 @@ func RunSandbox(ctx context.Context) (results []VMMessage, retErr error) {
 		done <- cmd.Wait()
 	}()
 
+	const maxTailLines = 12
+	tailLines := make([]string, 0, maxTailLines)
+	appendTail := func(line string) {
+		if strings.TrimSpace(line) == "" {
+			return
+		}
+		if len(tailLines) == maxTailLines {
+			copy(tailLines, tailLines[1:])
+			tailLines = tailLines[:maxTailLines-1]
+		}
+		tailLines = append(tailLines, line)
+	}
+
+	sawJSONProtocolLine := false
+	currentScript := ""
+	scriptOutputs := make(map[string][]string)
+	scriptOrder := make([]string, 0, 8)
+	rememberScript := func(name string) {
+		if name == "" {
+			return
+		}
+		if _, ok := scriptOutputs[name]; !ok {
+			scriptOutputs[name] = nil
+			scriptOrder = append(scriptOrder, name)
+		}
+	}
+	appendScriptOutput := func(name string, payload string) {
+		if name == "" || strings.TrimSpace(payload) == "" {
+			return
+		}
+		rememberScript(name)
+		scriptOutputs[name] = append(scriptOutputs[name], payload)
+	}
+	scriptOutputText := func(name string) string {
+		if name == "" {
+			return ""
+		}
+		return strings.Join(scriptOutputs[name], "\n")
+	}
+	synthesizeResultsFromOutputs := func() {
+		for _, name := range scriptOrder {
+			output := strings.TrimSpace(scriptOutputText(name))
+			if output == "" {
+				continue
+			}
+			results = append(results, VMMessage{
+				Type:     "result",
+				Script:   name,
+				OK:       true,
+				ExitCode: 0,
+				Output:   output,
+			})
+		}
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -94,26 +160,68 @@ func RunSandbox(ctx context.Context) (results []VMMessage, retErr error) {
 			if err != nil {
 				return nil, fmt.Errorf("qemu exited with error: %w", err)
 			}
+			if len(results) == 0 {
+				synthesizeResultsFromOutputs()
+			}
+			if len(results) == 0 {
+				if sawJSONProtocolLine {
+					return results, nil
+				}
+				if len(tailLines) > 0 {
+					return nil, fmt.Errorf("sandbox exited without any result messages; tail logs: %s", strings.Join(tailLines, " | "))
+				}
+				return nil, fmt.Errorf("sandbox exited without any result messages")
+			}
 			return results, nil
 
 		case line := <-lines:
+			line = strings.TrimSpace(line)
 			if line == "" {
 				continue
 			}
-			if !strings.HasPrefix(line, "{") {
+			appendTail(line)
+
+			// Find the first '{' to skip any serial console prefix noise.
+			i := strings.IndexByte(line, '{')
+			if i < 0 {
 				continue
 			}
+			candidate := line[i:]
 
 			var msg VMMessage
-			if err := json.Unmarshal([]byte(line), &msg); err != nil {
+			if err := json.Unmarshal([]byte(candidate), &msg); err != nil {
 				continue
 			}
+			sawJSONProtocolLine = true
 
 			switch msg.Type {
+			case "script_start":
+				currentScript = filepath.Base(strings.TrimSpace(msg.Script))
+				rememberScript(currentScript)
 			case "result":
+				msg.Script = filepath.Base(strings.TrimSpace(msg.Script))
+				if msg.Output == "" {
+					msg.Output = scriptOutputText(msg.Script)
+				}
+				if msg.Script != "" {
+					rememberScript(msg.Script)
+				}
 				results = append(results, msg)
 			case "vm_error":
-				return nil, fmt.Errorf("vm error: %s", msg.Msg)
+				errMsg := strings.TrimSpace(msg.Msg)
+				if errMsg == "" {
+					errMsg = strings.TrimSpace(msg.Message)
+				}
+				if errMsg == "" {
+					errMsg = "unknown vm error"
+				}
+				return nil, fmt.Errorf("vm error: %s", errMsg)
+			case "vm_status":
+				// status-only heartbeat
+			default:
+				if currentScript != "" {
+					appendScriptOutput(currentScript, line)
+				}
 			}
 		}
 	}
