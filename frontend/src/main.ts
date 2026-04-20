@@ -2,6 +2,7 @@ import "./style.css";
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 import { apiUrl } from "./apiBase";
+import { initSpecialistsTab } from "./specialistsTab";
 import type { ChatMessage, SessionSummary, StoredChat } from "./sessionStore";
 import {
   loadActiveSessionId,
@@ -32,9 +33,13 @@ function requireEl<T extends HTMLElement>(selector: string): T {
 
 const appEl = requireEl<HTMLElement>("#app");
 const mainScrollEl = requireEl<HTMLElement>(".main-scroll");
+const chatViewEl = requireEl<HTMLElement>("#chatView");
+const specialistsViewEl = requireEl<HTMLElement>("#specialistsView");
 const messagesEl = requireEl<HTMLElement>("#messages");
 const emptyStateEl = requireEl<HTMLElement>("#emptyState");
 const statusEl = requireEl<HTMLElement>("#status");
+const composerDockEl = requireEl<HTMLElement>(".composer-dock");
+const topbarModelEl = requireEl<HTMLElement>(".topbar-model");
 const formEl = requireEl<HTMLFormElement>("#composer");
 const promptEl = requireEl<HTMLTextAreaElement>("#prompt");
 const sendEl = requireEl<HTMLButtonElement>("#send");
@@ -52,9 +57,33 @@ const editMessageCloseEl = requireEl<HTMLButtonElement>("#editMessageClose");
 const editMessageCancelEl = requireEl<HTMLButtonElement>("#editMessageCancel");
 const editMessageSaveEl = requireEl<HTMLButtonElement>("#editMessageSave");
 const sidebarToggleEl = document.querySelector<HTMLButtonElement>("#sidebarToggle");
+const viewTabChatEl = requireEl<HTMLButtonElement>("#viewTabChat");
+const viewTabSpecialistsEl = requireEl<HTMLButtonElement>("#viewTabSpecialists");
 
 let contextMenuSessionId: string | null = null;
 let editingMessageIndex: number | null = null;
+let currentView: "chat" | "specialists" = "chat";
+
+const specialistsTab = initSpecialistsTab();
+
+function setView(view: "chat" | "specialists") {
+  currentView = view;
+  const isChat = view === "chat";
+
+  chatViewEl.hidden = !isChat;
+  specialistsViewEl.hidden = isChat;
+  composerDockEl.hidden = !isChat;
+  topbarModelEl.hidden = !isChat;
+
+  viewTabChatEl.classList.toggle("is-active", isChat);
+  viewTabSpecialistsEl.classList.toggle("is-active", !isChat);
+  viewTabChatEl.setAttribute("aria-selected", String(isChat));
+  viewTabSpecialistsEl.setAttribute("aria-selected", String(!isChat));
+
+  if (!isChat) {
+    void specialistsTab.refresh();
+  }
+}
 
 /** Messages per session (mutable arrays; same ref as `history` when that session is active). */
 const sessionMessages = new Map<string, ChatMessage[]>();
@@ -735,6 +764,14 @@ sidebarToggleEl?.addEventListener("click", () => {
   appEl.classList.toggle("sidebar-collapsed");
 });
 
+viewTabChatEl.addEventListener("click", () => {
+  setView("chat");
+});
+
+viewTabSpecialistsEl.addEventListener("click", () => {
+  setView("specialists");
+});
+
 promptEl.addEventListener("input", () => {
   syncComposerSendState();
   autosizePrompt();
@@ -951,3 +988,4 @@ if (window.matchMedia("(max-width: 860px)").matches) {
 }
 
 void bootstrapApp();
+setView(currentView);

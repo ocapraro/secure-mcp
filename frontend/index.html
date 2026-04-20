@@ -16,6 +16,18 @@
         </button>
 
         <div class="sidebar-section">
+          <div class="sidebar-section-title">Views</div>
+          <div class="sidebar-views" role="tablist" aria-label="Primary views">
+            <button type="button" id="viewTabChat" class="sidebar-view-tab is-active" role="tab" aria-selected="true">
+              Chat
+            </button>
+            <button type="button" id="viewTabSpecialists" class="sidebar-view-tab" role="tab" aria-selected="false">
+              Specialists
+            </button>
+          </div>
+        </div>
+
+        <div class="sidebar-section">
           <div class="sidebar-section-title">Recents</div>
           <ul id="recentsList" class="recents" aria-label="Recent chats"></ul>
         </div>
@@ -40,9 +52,39 @@
         </header>
 
         <main class="main">
-          <div class="main-scroll">
+          <div class="main-scroll" id="chatView">
             <div id="emptyState" class="empty-state">Ready when you are.</div>
             <section id="messages" class="messages" aria-live="polite" hidden></section>
+          </div>
+
+          <div class="main-scroll specialists-view" id="specialistsView" hidden>
+            <section class="specialists-shell">
+              <header class="specialists-header">
+                <h2>Specialists</h2>
+                <div class="specialists-header-actions">
+                  <p id="specialistsStatus" class="specialists-status" role="status">Loading...</p>
+                  <button type="button" id="specialistsRefresh" class="spec-refresh">Refresh</button>
+                </div>
+              </header>
+
+              <div id="specialistsFilterChips" class="spec-chips"></div>
+
+              <div class="spec-table-wrap">
+                <table class="spec-table">
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>Specialist</th>
+                      <th>Task</th>
+                      <th>Function Call</th>
+                      <th>Status</th>
+                      <th>Result</th>
+                    </tr>
+                  </thead>
+                  <tbody id="specialistsLogsBody"></tbody>
+                </table>
+              </div>
+            </section>
           </div>
 
           <div class="composer-dock">
