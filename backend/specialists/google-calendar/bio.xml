@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <specialist>
   <name>Google Calendar Assistant</name>
+  <version>1.0.0</version>
   <resume>Hi, I'm your Google Calendar specialist. I can list events from a calendar and create new events with specific times and details.</resume>
   <exampleRequest>Create a calendar event for tomorrow at 2 PM titled Project Check-In</exampleRequest>
   <plugins>

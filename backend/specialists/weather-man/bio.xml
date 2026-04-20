@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <specialist>
   <name>Weather Man</name>
+  <version>1.0.0</version>
   <resume>Hi I'm Weather Man! I have a whole bunch of weather sensors, so I can tell you what the weather is anywhere in the world.</resume>
   <exampleRequest>Identify the weather in boston</exampleRequest>
   <plugins>

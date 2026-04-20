@@ -88,6 +88,21 @@ func (s *DatabaseService) Init() error {
 	if err != nil {
 		return err
 	}
+	_, err = s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS specialist_integrity (
+			directory TEXT PRIMARY KEY,
+			specialist_name TEXT NOT NULL,
+			version TEXT NOT NULL DEFAULT '',
+			expected_hash TEXT NOT NULL,
+			current_hash TEXT NOT NULL,
+			changed INTEGER NOT NULL DEFAULT 0,
+			first_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			last_checked_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+	`)
+	if err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -414,4 +429,76 @@ func (s *DatabaseService) GetSecretValues() (map[string]string, error) {
 	}
 
 	return values, nil
+}
+
+func (s *DatabaseService) UpsertAndCompareSpecialistIntegrity(input UpsertSpecialistIntegrity) (SpecialistIntegrity, error) {
+	directory := strings.TrimSpace(input.Directory)
+	name := strings.TrimSpace(input.SpecialistName)
+	version := strings.TrimSpace(input.Version)
+	hash := strings.TrimSpace(input.CurrentHash)
+
+	if directory == "" || name == "" || hash == "" {
+		return SpecialistIntegrity{}, sql.ErrNoRows
+	}
+
+	var expectedHash string
+	err := s.db.QueryRow(`
+		SELECT expected_hash
+		FROM specialist_integrity
+		WHERE directory = ?
+	`, directory).Scan(&expectedHash)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			_, insertErr := s.db.Exec(`
+				INSERT INTO specialist_integrity (directory, specialist_name, version, expected_hash, current_hash, changed)
+				VALUES (?, ?, ?, ?, ?, 0)
+			`, directory, name, version, hash, hash)
+			if insertErr != nil {
+				return SpecialistIntegrity{}, insertErr
+			}
+		} else {
+			return SpecialistIntegrity{}, err
+		}
+	} else {
+		changed := 0
+		if expectedHash != hash {
+			changed = 1
+		}
+		_, updateErr := s.db.Exec(`
+			UPDATE specialist_integrity
+			SET specialist_name = ?,
+			    version = ?,
+			    current_hash = ?,
+			    changed = ?,
+			    last_checked_at = CURRENT_TIMESTAMP
+			WHERE directory = ?
+		`, name, version, hash, changed, directory)
+		if updateErr != nil {
+			return SpecialistIntegrity{}, updateErr
+		}
+	}
+
+	var out SpecialistIntegrity
+	var changedInt int
+	err = s.db.QueryRow(`
+		SELECT specialist_name, directory, version, expected_hash, current_hash, changed, first_seen_at, last_checked_at
+		FROM specialist_integrity
+		WHERE directory = ?
+	`, directory).Scan(
+		&out.SpecialistName,
+		&out.Directory,
+		&out.Version,
+		&out.ExpectedHash,
+		&out.CurrentHash,
+		&changedInt,
+		&out.FirstSeenAt,
+		&out.LastCheckedAt,
+	)
+	if err != nil {
+		return SpecialistIntegrity{}, err
+	}
+	out.Changed = changedInt != 0
+
+	return out, nil
 }

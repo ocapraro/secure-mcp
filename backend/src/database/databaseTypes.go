@@ -64,3 +64,21 @@ type Secret struct {
 	ID        int64     `json:"id"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
+
+type UpsertSpecialistIntegrity struct {
+	SpecialistName string `json:"specialist_name"`
+	Directory      string `json:"directory"`
+	Version        string `json:"version"`
+	CurrentHash    string `json:"current_hash"`
+}
+
+type SpecialistIntegrity struct {
+	SpecialistName string    `json:"specialist_name"`
+	Directory      string    `json:"directory"`
+	Version        string    `json:"version"`
+	ExpectedHash   string    `json:"expected_hash"`
+	CurrentHash    string    `json:"current_hash"`
+	Changed        bool      `json:"changed"`
+	FirstSeenAt    time.Time `json:"first_seen_at"`
+	LastCheckedAt  time.Time `json:"last_checked_at"`
+}

@@ -1,8 +1,11 @@
 package server
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -211,6 +214,73 @@ func redactSecrets(secrets []database.Secret) []secretResponse {
 			HasValue:  strings.TrimSpace(s.Value) != "",
 			UpdatedAt: s.UpdatedAt,
 		})
+	}
+	return out
+}
+
+func hashSpecialistSource(s agents.Specialist) (string, error) {
+	directory := strings.TrimSpace(s.Directory)
+	if directory == "" {
+		return "", fmt.Errorf("specialist %q has no directory", s.Name)
+	}
+
+	root := filepath.Join("../specialists", directory)
+	paths := make([]string, 0)
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if !d.Type().IsRegular() {
+			return nil
+		}
+		paths = append(paths, path)
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+
+	sort.Strings(paths)
+	h := sha256.New()
+	for _, path := range paths {
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return "", err
+		}
+		rel = filepath.ToSlash(rel)
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return "", err
+		}
+		_, _ = h.Write([]byte(rel))
+		_, _ = h.Write([]byte{0})
+		_, _ = h.Write(content)
+		_, _ = h.Write([]byte{0})
+	}
+
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func syncSpecialistsIntegrity(dbService *database.DatabaseService, specialists []agents.Specialist) map[string]database.SpecialistIntegrity {
+	out := make(map[string]database.SpecialistIntegrity, len(specialists))
+	for _, s := range specialists {
+		hash, err := hashSpecialistSource(s)
+		if err != nil {
+			continue
+		}
+		record, err := dbService.UpsertAndCompareSpecialistIntegrity(database.UpsertSpecialistIntegrity{
+			SpecialistName: s.Name,
+			Directory:      s.Directory,
+			Version:        strings.TrimSpace(s.Version),
+			CurrentHash:    hash,
+		})
+		if err != nil {
+			continue
+		}
+		out[s.Directory] = record
 	}
 	return out
 }
@@ -712,17 +782,29 @@ func InitServer(mux *http.ServeMux, dbService *database.DatabaseService) {
 	mux.HandleFunc("GET /api/specialists", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		type specialistInfo struct {
-			Name        string `json:"name"`
-			Resume      string `json:"resume"`
-			PluginCount int    `json:"plugin_count"`
+			Name                string `json:"name"`
+			Version             string `json:"version"`
+			Resume              string `json:"resume"`
+			PluginCount         int    `json:"plugin_count"`
+			IntegrityChanged    bool   `json:"integrity_changed"`
+			ExpectedSourceHash  string `json:"expected_source_hash"`
+			CurrentSourceHash   string `json:"current_source_hash"`
+			SpecialistDirectory string `json:"specialist_directory"`
 		}
 		list := agents.ListSpecialists()
+		integrityByDir := syncSpecialistsIntegrity(dbService, list)
 		out := make([]specialistInfo, 0, len(list))
 		for _, s := range list {
+			integrity := integrityByDir[s.Directory]
 			out = append(out, specialistInfo{
-				Name:        s.Name,
-				Resume:      s.Resume,
-				PluginCount: len(s.Plugins),
+				Name:                s.Name,
+				Version:             strings.TrimSpace(s.Version),
+				Resume:              s.Resume,
+				PluginCount:         len(s.Plugins),
+				IntegrityChanged:    integrity.Changed,
+				ExpectedSourceHash:  integrity.ExpectedHash,
+				CurrentSourceHash:   integrity.CurrentHash,
+				SpecialistDirectory: s.Directory,
 			})
 		}
 		_ = json.NewEncoder(w).Encode(out)

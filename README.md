@@ -189,7 +189,7 @@ Shut down the VM and export the disk as `backend/data/sandbox.qcow2`.
 ## Writing a specialist
 
 1. Create `backend/specialists/<your-name>/`
-2. Add `bio.xml` — see `weather-man/bio.xml` as a reference
+2. Add `bio.xml` — see `weather-man/bio.xml` as a reference. Include a semantic `<version>` tag for integrity tracking.
 3. In each plugin, declare any required secrets in `bio.xml` so they appear in the dashboard and can be injected at runtime:
 
 ```xml

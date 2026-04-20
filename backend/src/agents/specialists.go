@@ -31,6 +31,7 @@ type Plugin struct {
 
 type Specialist struct {
 	Name           string   `xml:"name"`
+	Version        string   `xml:"version"`
 	Resume         string   `xml:"resume"`
 	ExampleRequest string   `xml:"exampleRequest"`
 	Plugins        []Plugin `xml:"plugins>script"`

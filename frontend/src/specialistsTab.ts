@@ -10,8 +10,13 @@ import {
 
 type SpecialistInfo = {
   name: string;
+  version?: string;
   resume: string;
   plugin_count: number;
+  integrity_changed?: boolean;
+  expected_source_hash?: string;
+  current_source_hash?: string;
+  specialist_directory?: string;
 };
 
 type SpecialistLog = {
@@ -70,8 +75,13 @@ function renderSpecialistChips(listEl: HTMLElement, specialists: SpecialistInfo[
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = `spec-chip${selected === s.name ? " is-active" : ""}`;
+    if (s.integrity_changed) {
+      btn.classList.add("integrity-failed");
+    }
     btn.title = safeText(s.resume);
-    btn.textContent = safeText(s.name);
+    const version = (s.version ?? "").trim();
+    const base = safeText(s.name);
+    btn.textContent = version ? `${base} v${version}` : base;
     btn.addEventListener("click", () => onSelect(s.name));
     listEl.appendChild(btn);
   }
@@ -219,6 +229,7 @@ export function initSpecialistsTab() {
   const tbodyEl = root.querySelector<HTMLElement>("#specialistsLogsBody");
   const refreshEl = root.querySelector<HTMLButtonElement>("#specialistsRefresh");
   const statusEl = root.querySelector<HTMLElement>("#specialistsStatus");
+  const integrityAlertEl = root.querySelector<HTMLElement>("#specialistsIntegrityAlert");
   const secretsStatusEl = root.querySelector<HTMLElement>("#secretsStatus");
   const secretsTbodyEl = root.querySelector<HTMLElement>("#secretsTableBody");
 
@@ -227,6 +238,7 @@ export function initSpecialistsTab() {
     !tbodyEl ||
     !refreshEl ||
     !statusEl ||
+    !integrityAlertEl ||
     !secretsStatusEl ||
     !secretsTbodyEl
   ) {
@@ -302,6 +314,17 @@ export function initSpecialistsTab() {
     refreshEl.disabled = true;
     try {
       specialists = await fetchSpecialists();
+
+      const changed = specialists.filter((s) => Boolean(s.integrity_changed));
+      if (changed.length > 0) {
+        const names = changed.map((s) => s.name).join(", ");
+        integrityAlertEl.hidden = false;
+        integrityAlertEl.textContent = `Integrity alert: ${changed.length} specialist source hash mismatch detected (${names}).`;
+      } else {
+        integrityAlertEl.hidden = true;
+        integrityAlertEl.textContent = "";
+      }
+
       renderSpecialistChips(chipsEl, specialists, selected, async (name) => {
         selected = name;
         renderSpecialistChips(chipsEl, specialists, selected, async (n) => {

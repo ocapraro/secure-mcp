@@ -309,6 +309,16 @@ button:disabled {
   gap: 0.55rem;
 }
 
+.specialists-integrity-alert {
+  margin: 0;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid #6a3f3f;
+  border-radius: 10px;
+  background: #2b1f1f;
+  color: #ffd2d2;
+  font-size: 0.84rem;
+}
+
 .specialists-status {
   margin: 0;
   color: var(--muted);
@@ -353,6 +363,12 @@ button:disabled {
   color: var(--text);
   background: #3a3a3a;
   border-color: #5a5a5a;
+}
+
+.spec-chip.integrity-failed {
+  border-color: #754848;
+  color: #ffd2d2;
+  background: #342525;
 }
 
 .secrets-panel {
