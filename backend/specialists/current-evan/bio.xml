@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<specialist>
+  <name>Current Evan</name>
+  <version>1.0.0</version>
+  <resume>Hi, I'm Current Evan. I specialize in quick present-moment facts like the current time, current date, and the current U.S. president.</resume>
+  <exampleRequest>What time is it?</exampleRequest>
+  <plugins>
+    <script>
+      <path>scripts/get-current-datetime.py</path>
+      <description>Returns the current local date and time together in a single response.</description>
+      <usage>python scripts/get-current-datetime.py</usage>
+      <arguments></arguments>
+      <output>JSON object with fields: iso_datetime, iso_date, time_24h, weekday, timezone, unix_timestamp.</output>
+      <example>python scripts/get-current-datetime.py</example>
+    </script>
+    <script>
+      <path>scripts/get-current-us-president.py</path>
+      <description>Returns the current U.S. president and vice president based on the current date.</description>
+      <usage>python scripts/get-current-us-president.py</usage>
+      <arguments></arguments>
+      <output>JSON object with fields: date, president, vice_president, party, term_start.</output>
+      <example>python scripts/get-current-us-president.py</example>
+    </script>
+  </plugins>
+</specialist>
