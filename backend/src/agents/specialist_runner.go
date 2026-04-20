@@ -175,19 +175,6 @@ func extractFirstJSONObject(raw string) (string, bool) {
 	return "", false
 }
 
-func fallbackScriptCall(allowed map[string]string) string {
-	if _, ok := allowed["fetch-forecast"]; ok {
-		return "fetch-forecast <location>"
-	}
-	if _, ok := allowed["get-weather"]; ok {
-		return "get-weather <location>"
-	}
-	for name := range allowed {
-		return name
-	}
-	return ""
-}
-
 var tokenLiteralPattern = regexp.MustCompile(`"__TOKEN_([A-Za-z_][A-Za-z0-9_]*)(?::(string|int|float|bool))?__"`)
 
 func splitScriptCall(raw string) ([]string, error) {
@@ -480,28 +467,7 @@ func SelectSpecialistScripts(s Specialist, task string, openaiService *openai.Op
 	}
 
 	if len(plan.Scripts) == 0 {
-		retryMessage := fmt.Sprintf("{\"task\":\"%s\",\"instruction\":\"Return at least one script call from your available plugins.\"}", task)
-		retryRaw, retryErr := agent.Chat(retryMessage, openaiService, ctx)
-		if retryErr != nil {
-		} else {
-			if emit != nil {
-				emit(fmt.Sprintf("#### %s retry response\n```json\n%s\n```\n\n", s.Name, strings.TrimSpace(retryRaw)))
-			}
-			retryPlan, parseErr := parseScriptPlan(retryRaw)
-			if parseErr == nil {
-				plan = retryPlan
-			}
-		}
-	}
-
-	if len(plan.Scripts) == 0 {
-		fallback := fallbackScriptCall(allowed)
-		if fallback != "" {
-			plan.Scripts = []string{fallback}
-			if emit != nil {
-				emit(fmt.Sprintf("Fallback script selected: `%s`\n\n", fallback))
-			}
-		}
+		return SpecialistScriptPlan{}, fmt.Errorf("specialist %s selected no scripts", s.Name)
 	}
 
 	if emit != nil && len(plan.Scripts) > 0 {

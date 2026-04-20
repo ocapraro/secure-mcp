@@ -379,42 +379,16 @@ func runDelegatedTasks(initialMessage string, specialistMap map[string]agents.Sp
 		} else if s, ok := specialistMap[assigneeLower]; ok {
 			plan, err := agents.SelectSpecialistScripts(s, specialistTaskPrompt, openaiService, ctx.Context(), emit)
 			if err != nil {
+				tr.Error = err.Error()
 				if emit != nil {
-					emit(fmt.Sprintf("Specialist error: %s\n", err.Error()))
-					emit("Falling back to Generalist for this task.\n\n")
-				}
-				answer, fallbackErr := runGeneralistTask(assignment.Task)
-				if fallbackErr != nil {
-					tr.Error = fallbackErr.Error()
-					if emit != nil {
-						emit(fmt.Sprintf("Generalist fallback error: %s\n\n", tr.Error))
-					}
-				} else {
-					tr.Assignee = "Generalist"
-					tr.Answer = answer
-					if emit != nil {
-						emit(fmt.Sprintf("Generalist fallback result\n\n%s\n\n", answer))
-					}
+					emit(fmt.Sprintf("Specialist error: %s\n\n", err.Error()))
 				}
 			} else {
 				staged, stageErr := agents.StageSpecialistScripts(s, specialistTaskPrompt, plan, sandbox.SharedScriptsDir(), secretValues, emit)
 				if stageErr != nil {
+					tr.Error = stageErr.Error()
 					if emit != nil {
-						emit(fmt.Sprintf("Staging error: %s\n", stageErr.Error()))
-						emit("Falling back to Generalist for this task.\n\n")
-					}
-					answer, fallbackErr := runGeneralistTask(assignment.Task)
-					if fallbackErr != nil {
-						tr.Error = fallbackErr.Error()
-						if emit != nil {
-							emit(fmt.Sprintf("Generalist fallback error: %s\n\n", tr.Error))
-						}
-					} else {
-						tr.Assignee = "Generalist"
-						tr.Answer = answer
-						if emit != nil {
-							emit(fmt.Sprintf("Generalist fallback result\n\n%s\n\n", answer))
-						}
+						emit(fmt.Sprintf("Staging error: %s\n\n", stageErr.Error()))
 					}
 				} else {
 					pending = append(pending, pendingSpecialistTask{
@@ -426,17 +400,9 @@ func runDelegatedTasks(initialMessage string, specialistMap map[string]agents.Sp
 				}
 			}
 		} else {
-			answer, err := runGeneralistTask(assignment.Task)
-			if err != nil {
-				tr.Error = err.Error()
-				if emit != nil {
-					emit(fmt.Sprintf("Fallback generalist error: %s\n\n", tr.Error))
-				}
-			} else {
-				tr.Answer = answer
-				if emit != nil {
-					emit(fmt.Sprintf("Fallback generalist result\n\n%s\n\n", answer))
-				}
+			tr.Error = fmt.Sprintf("unknown assignee: %s", assignment.Assignee)
+			if emit != nil {
+				emit(fmt.Sprintf("Assignment error: %s\n\n", tr.Error))
 			}
 		}
 
