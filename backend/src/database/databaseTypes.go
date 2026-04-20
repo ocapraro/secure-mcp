@@ -38,3 +38,18 @@ type Session struct {
 	PartialSession
 	Messages []Message `json:"messages"`
 }
+
+type CreateSpecialistLog struct {
+	Specialist string `json:"specialist"`
+	Task       string `json:"task"`
+	Script     string `json:"script"`
+	OK         bool   `json:"ok"`
+	Output     string `json:"output"`
+	Error      string `json:"error"`
+}
+
+type SpecialistLog struct {
+	CreateSpecialistLog
+	ID        int64     `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+}

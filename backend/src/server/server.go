@@ -569,5 +569,59 @@ func InitServer(mux *http.ServeMux, dbService *database.DatabaseService) {
 		streamer.Send("## Final Response\n\n")
 		streamer.Send(finalResponse)
 		streamer.Done()
+
+		// Persist specialist script execution logs.
+		for _, tr := range results {
+			if strings.EqualFold(tr.Assignee, "Generalist") || tr.Answer == "" {
+				continue
+			}
+			var envelope agents.SpecialistExecutionEnvelope
+			if err := json.Unmarshal([]byte(tr.Answer), &envelope); err != nil {
+				continue
+			}
+			for _, entry := range envelope.Results {
+				_ = dbService.InsertSpecialistLog(database.CreateSpecialistLog{
+					Specialist: envelope.Specialist,
+					Task:       envelope.Task,
+					Script:     entry.Script,
+					OK:         entry.Error == "",
+					Output:     entry.Output,
+					Error:      entry.Error,
+				})
+			}
+		}
+	})
+
+	mux.HandleFunc("GET /api/specialists", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		type specialistInfo struct {
+			Name        string `json:"name"`
+			Resume      string `json:"resume"`
+			PluginCount int    `json:"plugin_count"`
+		}
+		list := agents.ListSpecialists()
+		out := make([]specialistInfo, 0, len(list))
+		for _, s := range list {
+			out = append(out, specialistInfo{
+				Name:        s.Name,
+				Resume:      s.Resume,
+				PluginCount: len(s.Plugins),
+			})
+		}
+		_ = json.NewEncoder(w).Encode(out)
+	})
+
+	mux.HandleFunc("GET /api/specialist-logs", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		specialist := strings.TrimSpace(r.URL.Query().Get("specialist"))
+		logs, err := dbService.GetSpecialistLogs(specialist)
+		if err != nil {
+			http.Error(w, "failed to query logs", http.StatusInternalServerError)
+			return
+		}
+		if logs == nil {
+			logs = []database.SpecialistLog{}
+		}
+		_ = json.NewEncoder(w).Encode(logs)
 	})
 }

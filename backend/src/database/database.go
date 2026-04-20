@@ -61,8 +61,72 @@ func (s *DatabaseService) Init() error {
 	if err != nil {
 		return err
 	}
+	_, err = s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS specialist_logs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			specialist TEXT NOT NULL,
+			task TEXT NOT NULL,
+			script TEXT NOT NULL,
+			ok INTEGER NOT NULL DEFAULT 0,
+			output TEXT NOT NULL DEFAULT '',
+			error TEXT NOT NULL DEFAULT ''
+		);
+	`)
+	if err != nil {
+		return err
+	}
 
 	return nil
+}
+
+func (s *DatabaseService) InsertSpecialistLog(log CreateSpecialistLog) error {
+	okInt := 0
+	if log.OK {
+		okInt = 1
+	}
+	_, err := s.db.Exec(`
+		INSERT INTO specialist_logs (specialist, task, script, ok, output, error)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, log.Specialist, log.Task, log.Script, okInt, log.Output, log.Error)
+	return err
+}
+
+func (s *DatabaseService) GetSpecialistLogs(specialist string) ([]SpecialistLog, error) {
+	var rows *sql.Rows
+	var err error
+	if specialist == "" {
+		rows, err = s.db.Query(`
+			SELECT id, created_at, specialist, task, script, ok, output, error
+			FROM specialist_logs
+			ORDER BY id DESC
+			LIMIT 500
+		`)
+	} else {
+		rows, err = s.db.Query(`
+			SELECT id, created_at, specialist, task, script, ok, output, error
+			FROM specialist_logs
+			WHERE specialist = ?
+			ORDER BY id DESC
+			LIMIT 500
+		`, specialist)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var logs []SpecialistLog
+	for rows.Next() {
+		var l SpecialistLog
+		var okInt int
+		if err := rows.Scan(&l.ID, &l.CreatedAt, &l.Specialist, &l.Task, &l.Script, &okInt, &l.Output, &l.Error); err != nil {
+			return nil, err
+		}
+		l.OK = okInt != 0
+		logs = append(logs, l)
+	}
+	return logs, rows.Err()
 }
 
 func (s *DatabaseService) GetSessions() ([]PartialSession, error) {
