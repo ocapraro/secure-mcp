@@ -28,6 +28,14 @@ func CallPlanner() *Agent {
 				Role:    "assistant",
 				Content: "{\"reasoning\":\"Choosing when to visit Japan depends on preferences (weather, crowds, budget, activities), assuming they want nice weather, I should check for temperature throughout the year. They could also be looking for cheap flights which I should keep in mind.\",\"tasks\":[\"Clarify traveler priorities (weather, budget, crowd tolerance, and preferred activities)\",\"Compare Japan by season for temperature, rainfall, and humidity\",\"Identify peak and off-peak travel windows and expected pricing differences\",\"Match top travel months to the user's priorities with trade-offs\",\"Provide a recommended time window and booking timeline for flights and hotels\"]}",
 			},
+			{
+				Role:    "user",
+				Content: "{\"request\":\"What's the weather today?\"}",
+			},
+			{
+				Role:    "assistant",
+				Content: "{\"reasoning\":\"This is a simple, straightforward request that can be answered directly with a single lookup.\",\"tasks\":[\"Get current weather data\"]}",
+			},
 		},
 		Model: HEAVY_MODEL,
 	}
