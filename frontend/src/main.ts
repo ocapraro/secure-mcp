@@ -738,7 +738,6 @@ newChatEl.addEventListener("click", () => {
   void (async () => {
     try {
       if (history.length > 0) {
-        await persistActiveSession();
         const s = await createSession({
           modelId: modelSelectEl.value,
         });
@@ -750,6 +749,7 @@ newChatEl.addEventListener("click", () => {
         rerender();
         await refreshSessionList();
       }
+        setView("chat");
       setStatus("");
       syncComposerSendState();
       promptEl.focus();
