@@ -330,6 +330,7 @@ func runDelegatedTasks(initialMessage string, specialistMap map[string]agents.Sp
 	}
 
 	results := make([]taskResult, 0, len(delegated.Assignments))
+	stageCache := agents.ScriptStageCache{}
 	type pendingSpecialistTask struct {
 		ResultIndex int
 		Specialist  agents.Specialist
@@ -384,7 +385,7 @@ func runDelegatedTasks(initialMessage string, specialistMap map[string]agents.Sp
 					emit(fmt.Sprintf("Specialist error: %s\n\n", err.Error()))
 				}
 			} else {
-				staged, stageErr := agents.StageSpecialistScripts(s, specialistTaskPrompt, plan, sandbox.SharedScriptsDir(), secretValues, emit)
+				staged, stageErr := agents.StageSpecialistScripts(s, specialistTaskPrompt, plan, sandbox.SharedScriptsDir(), secretValues, stageCache, emit)
 				if stageErr != nil {
 					tr.Error = stageErr.Error()
 					if emit != nil {

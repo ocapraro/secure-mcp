@@ -2,6 +2,8 @@ package agents
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -35,6 +37,8 @@ type StagedScript struct {
 	ScriptCall string `json:"scriptCall"`
 	StagedFile string `json:"stagedFile"`
 }
+
+type ScriptStageCache map[string]string
 
 // CallSpecialist builds an Agent primed as the given specialist.
 func CallSpecialist(s Specialist) *Agent {
@@ -514,6 +518,40 @@ func specialistDirName(name string) string {
 	return strings.ToLower(strings.ReplaceAll(name, " ", "-"))
 }
 
+func scriptSemanticKey(plugin Plugin, argValues map[string]string, secretValues map[string]string) string {
+	h := sha256.New()
+	writePart := func(value string) {
+		_, _ = h.Write([]byte(strings.TrimSpace(value)))
+		_, _ = h.Write([]byte{0})
+	}
+
+	writePart(plugin.Description)
+	writePart(plugin.Usage)
+	writePart(plugin.Output)
+
+	for _, arg := range plugin.Arguments {
+		writePart(arg.Name)
+		writePart(arg.Required)
+		writePart(arg.Value)
+		writePart(argValues[arg.Name])
+	}
+
+	for _, secret := range plugin.Secrets {
+		writePart(secret.Name)
+		writePart(secret.Required)
+		writePart(secret.Value)
+		resolved := secretValues[secret.Name]
+		if resolved == "" {
+			resolved = secretValues[strings.ToLower(secret.Name)]
+		}
+		writePart(resolved)
+	}
+
+	writePart(argValues["task_input"])
+
+	return hex.EncodeToString(h.Sum(nil))
+}
+
 // SelectSpecialistScripts asks the specialist model which scripts should run for this task.
 func SelectSpecialistScripts(s Specialist, task string, openaiService *openai.OpenAIService, ctx context.Context, emit func(string)) (SpecialistScriptPlan, error) {
 	agent := CallSpecialist(s)
@@ -591,9 +629,12 @@ func SelectSpecialistScripts(s Specialist, task string, openaiService *openai.Op
 }
 
 // StageSpecialistScripts copies selected specialist scripts into sharedDir so sandbox can run them.
-func StageSpecialistScripts(s Specialist, task string, plan SpecialistScriptPlan, sharedDir string, secretValues map[string]string, emit func(string)) ([]StagedScript, error) {
+func StageSpecialistScripts(s Specialist, task string, plan SpecialistScriptPlan, sharedDir string, secretValues map[string]string, stageCache ScriptStageCache, emit func(string)) ([]StagedScript, error) {
 	if err := os.MkdirAll(sharedDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create shared scripts dir: %w", err)
+	}
+	if stageCache == nil {
+		stageCache = ScriptStageCache{}
 	}
 
 	batchID := time.Now().UnixNano()
@@ -637,6 +678,18 @@ func StageSpecialistScripts(s Specialist, task string, plan SpecialistScriptPlan
 			return nil, fmt.Errorf("parse args for %q: %w", call, err)
 		}
 		argValues["task_input"] = task
+		semanticKey := scriptSemanticKey(plugin, argValues, secretValues)
+		if stagedFile, ok := stageCache[semanticKey]; ok {
+			staged = append(staged, StagedScript{
+				ScriptCall: call,
+				StagedFile: stagedFile,
+			})
+
+			if emit != nil {
+				emit(fmt.Sprintf("Reused staged script for `%s` as `%s`\n\n", call, stagedFile))
+			}
+			continue
+		}
 
 		tokenRequired := buildTokenRequiredMap(plugin)
 		tokenRequired["task_input"] = true
@@ -658,6 +711,7 @@ func StageSpecialistScripts(s Specialist, task string, plan SpecialistScriptPlan
 		if err := os.WriteFile(destPath, []byte(content), 0o644); err != nil {
 			return nil, fmt.Errorf("write staged script %s: %w", destPath, err)
 		}
+		stageCache[semanticKey] = stagedFile
 
 		staged = append(staged, StagedScript{
 			ScriptCall: call,
